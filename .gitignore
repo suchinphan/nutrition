@@ -1,0 +1,14 @@
+﻿backend/.env
+backend/mysql_config.json
+backend/config.json
+backend/image_providers.json
+backend/*.db
+backend/flask_test.log
+__pycache__/
+*.pyc
+node_modules/
+frontend/mobile/build/
+dumps/
+backend/uploads/
+backend/static/report_images/
+backend/pipeline/*.db

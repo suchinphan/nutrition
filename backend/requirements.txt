@@ -1,0 +1,10 @@
+Flask
+Flask-SQLAlchemy
+Flask-Cors
+Werkzeug
+PyMySQL
+cryptography
+Flask-Limiter
+Pillow
+python-dotenv
+fpdf2

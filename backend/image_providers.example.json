@@ -1,0 +1,6 @@
+{
+  "google_api_key": "YOUR_GOOGLE_API_KEY",
+  "google_cx": "YOUR_GOOGLE_CUSTOM_SEARCH_CX",
+  "unsplash_access_key": "YOUR_UNSPLASH_ACCESS_KEY",
+  "pexels_api_key": "YOUR_PEXELS_API_KEY"
+}
