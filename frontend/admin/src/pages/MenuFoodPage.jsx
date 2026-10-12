@@ -177,6 +177,8 @@ export function MenuFoodPage() {
       />
       <ImportCsvModal
         opened={importOpened}
+        type={type}
+        categories={categories}
         onClose={() => setImportOpened(false)}
         onImported={() => load(type)}
       />

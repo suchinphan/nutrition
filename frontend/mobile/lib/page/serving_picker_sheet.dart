@@ -30,7 +30,7 @@ class ServingPickerSheet extends StatefulWidget {
 
 class _ServingPickerSheetState extends State<ServingPickerSheet> {
   ServingSize? _selectedSize;
-  double _quantity = 1;
+  int _quantity = 1;
 
   @override
   void initState() {
@@ -48,15 +48,15 @@ class _ServingPickerSheetState extends State<ServingPickerSheet> {
   String get _selectedSizeLabel =>
       (_selectedSize?.unitNameTh.isNotEmpty ?? false) ? _selectedSize!.unitNameTh : 'ขนาดนี้';
 
-  void _adjustQuantity(double delta) {
+  void _adjustQuantity(int delta) {
     setState(() {
-      _quantity = (_quantity + delta).clamp(0.5, 5.0);
+      _quantity = (_quantity + delta).clamp(1, 5);
     });
   }
 
   void _add() {
     Navigator.of(context).pop(
-      ServingChoice(item: widget.item, servingSize: _selectedSize, quantity: _quantity),
+      ServingChoice(item: widget.item, servingSize: _selectedSize, quantity: _quantity.toDouble()),
     );
   }
 
@@ -138,7 +138,7 @@ class _ServingPickerSheetState extends State<ServingPickerSheet> {
               const SizedBox(height: 6),
               Text(
                 item.categoryType == 'drink'
-                    ? '$_selectedSizeLabel ปริมาณเครื่องดื่ม ประมาณ ${_selectedSize!.gramsApprox!.toStringAsFixed(0)} กรัม '
+                    ? '$_selectedSizeLabel ปริมาณเครื่องดื่ม ประมาณ ${_selectedSize!.gramsApprox!.toStringAsFixed(0)} มิลลิลิตร '
                         'ให้พลังงานประมาณ ${_selectedSizeCalories.toStringAsFixed(0)} kcal'
                     : '$_selectedSizeLabel มีปริมาณอาหาร ประมาณ ${_selectedSize!.gramsApprox!.toStringAsFixed(0)} กรัม '
                         'ให้พลังงานประมาณ ${_selectedSizeCalories.toStringAsFixed(0)} kcal',
@@ -153,12 +153,12 @@ class _ServingPickerSheetState extends State<ServingPickerSheet> {
             children: [
               IconButton(
                 icon: const Icon(Icons.remove_circle_outline),
-                onPressed: _quantity > 0.5 ? () => _adjustQuantity(-0.5) : null,
+                onPressed: _quantity > 1 ? () => _adjustQuantity(-1) : null,
               ),
-              Text(_quantity.toStringAsFixed(1), style: AppTextStyles.headingSmall),
+              Text(_quantity.toString(), style: AppTextStyles.headingSmall),
               IconButton(
                 icon: const Icon(Icons.add_circle_outline),
-                onPressed: _quantity < 5.0 ? () => _adjustQuantity(0.5) : null,
+                onPressed: _quantity < 5 ? () => _adjustQuantity(1) : null,
               ),
             ],
           ),

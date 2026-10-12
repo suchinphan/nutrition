@@ -29,6 +29,7 @@ from health_calc import (
     calc_calories_from_macros, disease_adjustment_factor, calc_calories_goal_custom,
     score_food_candidate, blocked_category_reason,
 )
+from recommendation_ai import trained_scores
 from config import CURRENT_PDPA_POLICY_VERSION
 from models import *
 from error_utils import error_response, ERROR_STATUS_DEFAULTS
@@ -427,6 +428,7 @@ def ai_recommend_menu():
     if not _valid_food_category_type(category):
         return error_response('ไม่พบหมวดนี้', 400, 'VALIDATION_ERROR')
     limit = min(max(int(data.get('limit') or 5), 1), 20)
+    randomize = bool(data.get('randomize'))
 
     # วันที่จะคำนวณคำแนะนำให้ — ค่าเริ่มต้นคือวันนี้ แต่ให้ระบุ 'date' มาแทนได้
     # (ใช้คู่กับปฏิทินในกล่อง "AI แนะนำเมนู" ที่จำกัดช่วงตามรอบเป้าหมายสุขภาพ
@@ -461,18 +463,45 @@ def ai_recommend_menu():
         .filter(FoodCategory.type == category, FoodItem.is_active == True)
         .all()
     )
-    scored = []
+    eligible_candidates = []
     excluded_for_allergy = 0
     for item in candidates:
         item_allergens = {a.name.strip().lower() for a in item.allergens}
         if user_allergens & item_allergens:
             excluded_for_allergy += 1
             continue
+        eligible_candidates.append(item)
+
+    positive_food_ids = {
+        food_id for (food_id,) in db.session.query(UserFavoriteFood.food_item_id)
+        .filter(UserFavoriteFood.user_id == user.id)
+        .all()
+    }
+    positive_food_ids.update(
+        food_id for (food_id,) in db.session.query(MealLogItem.food_item_id)
+        .join(MealLog, MealLog.id == MealLogItem.meal_log_id)
+        .filter(MealLog.user_id == user.id, MealLogItem.is_eaten == True)
+        .all()
+    )
+    negative_food_ids = {
+        food_id for (food_id,) in db.session.query(MealLogItem.food_item_id)
+        .join(MealLog, MealLog.id == MealLogItem.meal_log_id)
+        .filter(MealLog.user_id == user.id, MealLogItem.is_eaten == False)
+        .all()
+    }
+    learned_scores = trained_scores(
+        eligible_candidates, positive_food_ids, negative_food_ids, target_calories
+    )
+
+    scored = []
+    for item in eligible_candidates:
         s = score_food_candidate(
             {'calories': item.calories, 'protein_g': item.protein_g, 'fat_g': item.fat_g,
              'fiber_g': item.fiber_g, 'sugar_g': item.sugar_g},
             target_calories, user.health_goal, user.chronic_diseases,
         )
+        if learned_scores is not None:
+            s = round(s + learned_scores[item.id] * 100, 2)
         scored.append((s, item))
 
     if not scored:
@@ -481,8 +510,11 @@ def ai_recommend_menu():
         return error_response('ไม่มีเมนูที่เหมาะกับโปรไฟล์นี้', 404, 'NOT_FOUND')
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
+    ranked_pool = scored[:max(min(len(scored), limit * 4), limit)]
+    if randomize:
+        random.shuffle(ranked_pool)
     results = []
-    for s, item in scored[:limit]:
+    for s, item in ranked_pool[:limit]:
         serving = ServingSize.query.filter_by(food_item_id=item.id, unit_name='medium').first() \
             or ServingSize.query.filter_by(food_item_id=item.id).first()
         results.append({
@@ -579,7 +611,9 @@ def get_dashboard_summary():
     _finalize_expired_goal_cycle(user)
     summary = _dashboard_summary_for_user(user)
     unacknowledged = HealthGoalCycle.query.filter_by(
-        user_id=user.id, acknowledged_at=None
+        user_id=user.id,
+        health_goal=user.health_goal,
+        acknowledged_at=None,
     ).order_by(HealthGoalCycle.period_end.desc()).first()
     summary['goal_cycle_result'] = _serialize_goal_cycle(unacknowledged) if unacknowledged else None
 
@@ -1351,12 +1385,14 @@ def _serialize_user_profile(user):
         'bmi_status': calc_bmi_status(bmi_val),
         'health_goal': user.health_goal,
         'calories_goal': user.calories_goal,
+        'health_goal_start_weight': user.health_goal_start_weight,
         'health_goal_locked_until': user.health_goal_locked_until.isoformat() if user.health_goal_locked_until else None,
         # ให้ฝั่ง Flutter คำนวณ "วันที่ N" ของรอบเป้าหมาย (ดูปุ่ม "บันทึก
         # ย้อนหลัง" ในหน้าหลัก/ประวัติ) — เดิมไม่เคยส่งฟิลด์นี้ออกมาเลย
         'health_goal_started_at': user.health_goal_started_at.isoformat() if user.health_goal_started_at else None,
         'health_goal_target_weight': user.health_goal_target_weight,
         'health_goal_target_days': user.health_goal_target_days,
+        'health_goal_calorie_adjustment': user.health_goal_calorie_adjustment,
         'chronic_diseases': user.chronic_diseases or [],
         'food_allergies': user.food_allergies or [],
         'is_admin': bool(user.is_admin),
@@ -1497,6 +1533,22 @@ def user_info(user_id):
                 )
                 if user.health_goal_target_weight is not None else None
             )
+            if _custom_calories is not None:
+                _daily_adjustment = (
+                    (user.health_goal_target_weight - user.weight) * 7700
+                    / user.health_goal_target_days
+                )
+                _calorie_floor = 1200 if user.gender == 'หญิง' else 1500
+                if abs(_daily_adjustment) > 1000 or _custom_calories <= 0 or (
+                    user.health_goal == 'ลดน้ำหนัก' and _custom_calories < _calorie_floor
+                ):
+                    db.session.rollback()
+                    return error_response(
+                        'แผนเป้าหมายทำให้พลังงานต่อวันต่ำหรือปรับมากกว่าขอบเขตที่ปลอดภัย '
+                        'กรุณาเพิ่มจำนวนวันหรือปรับน้ำหนักเป้าหมาย',
+                        400,
+                        'UNSAFE_HEALTH_GOAL',
+                    )
             user.calories_goal = (
                 _custom_calories if _custom_calories is not None
                 else calc_calories_goal(_adjusted_tdee, user.health_goal, user.gender)
@@ -1697,30 +1749,30 @@ def save_health_goal():
             f"health_goal ต้องเป็นหนึ่งใน {', '.join(HEALTH_GOALS)} เท่านั้น", 400, 'INVALID_HEALTH_GOAL'
         )
 
+    calorie_adjustment = data.get('calorie_adjustment')
+    if calorie_adjustment is not None:
+        try:
+            parsed_adjustment = float(calorie_adjustment)
+        except (TypeError, ValueError):
+            return error_response('อัตราแคลอรีไม่ถูกต้อง', 400, 'VALIDATION_ERROR')
+        if (
+            goal == 'รักษาน้ำหนัก'
+            or not parsed_adjustment.is_integer()
+            or int(parsed_adjustment) not in (500, 1000)
+        ):
+            return error_response(
+                'อัตราแคลอรีต้องเป็น 500 หรือ 1000 kcal/วัน สำหรับเป้าหมายลด/เพิ่มน้ำหนัก',
+                400,
+                'VALIDATION_ERROR',
+            )
+        calorie_adjustment = int(parsed_adjustment)
+
     # ก่อนจะให้ตั้งเป้าหมายใหม่ (ซึ่งจะเขียนทับ health_goal_locked_until เดิม)
     # ต้องสรุปผลรอบก่อนหน้าที่หมดอายุแล้วก่อน ไม่งั้นคำนวณ period_start ของ
     # รอบเก่าย้อนหลังไม่ได้อีกเลย (ดู _finalize_expired_goal_cycle)
     _finalize_expired_goal_cycle(user)
 
     now_thailand = get_thailand_time()
-    locked_until = user.health_goal_locked_until
-    if locked_until is not None:
-        # ค่าที่อ่านกลับจาก DB เป็น naive (ไม่มี tzinfo) เสมอ ต้องแปะ timezone
-        # กรุงเทพฯ ก่อนเทียบกับ get_thailand_time() ที่เป็น aware — เหมือน
-        # pattern ที่ reset-password ใช้ตรวจ token/OTP หมดอายุ
-        if locked_until.tzinfo is None:
-            locked_until = locked_until.replace(tzinfo=timezone(timedelta(hours=7)))
-        if now_thailand < locked_until:
-            # 409 (conflict กับสถานะปัจจุบัน) ไม่ใช่ 403 — ฝั่ง Flutter
-            # (TypedApiClient) แม็พ 403 ทุกตัวเป็น AuthError แล้วบางหน้า
-            # redirect ไปหน้า login ทันที ซึ่งผิดความหมายสำหรับ error ที่ไม่
-            # เกี่ยวกับสิทธิ์/session แบบนี้
-            return error_response(
-                f"เปลี่ยนเป้าหมายได้อีกครั้งในวันที่ {locked_until.strftime('%d/%m/%Y')}",
-                409, 'HEALTH_GOAL_LOCKED',
-                detail={'locked_until': locked_until.isoformat()},
-            )
-
     tdee = calc_tdee(user.weight, user.height, calc_age(user.date_of_birth), user.gender, user.activity_level)
     if tdee is None:
         return error_response(
@@ -1737,13 +1789,16 @@ def save_health_goal():
     # ล็อกตรงกับแผนจริง เช่น วางแผน 30 วัน ก็ควรล็อก 30 วัน) กันค่าประหลาด
     # (0/ลบ/พิมพ์ผิดเป็นตัวเลขมหาศาล) ด้วยการ clamp ไว้ 1-3650 วัน (10 ปี)
     # ไม่มี/parse ไม่ได้ fallback กลับไปที่ 7 วันเดิมเพื่อความเข้ากันได้ย้อนหลัง
+    target_weight_provided = data.get('target_weight') is not None
     try:
         custom_days = int(data.get('days'))
-        if custom_days < 1:
-            custom_days = 7
-        elif custom_days > 3650:
-            custom_days = 3650
+        if target_weight_provided and not 1 <= custom_days <= 3650:
+            return error_response('จำนวนวันต้องอยู่ระหว่าง 1 ถึง 3650 วัน', 400, 'VALIDATION_ERROR')
+        if not target_weight_provided:
+            custom_days = min(max(custom_days, 1), 3650)
     except (TypeError, ValueError):
+        if target_weight_provided:
+            return error_response('กรุณาระบุจำนวนวันให้ถูกต้อง', 400, 'VALIDATION_ERROR')
         custom_days = 7
 
     # น้ำหนักเป้าหมาย (ฝั่ง Flutter ส่ง "target_weight" มาจากกล่องวางแผน
@@ -1758,27 +1813,63 @@ def save_health_goal():
         tw = data.get('target_weight')
         if tw is not None:
             target_weight = float(tw)
-            if target_weight <= 0:
-                target_weight = None
     except (TypeError, ValueError):
-        target_weight = None
+        if target_weight_provided:
+            return error_response('น้ำหนักเป้าหมายไม่ถูกต้อง', 400, 'VALIDATION_ERROR')
+
+    if target_weight_provided and (
+        target_weight is None or target_weight <= 0 or target_weight > 1000
+    ):
+        return error_response('น้ำหนักเป้าหมายต้องอยู่ระหว่าง 1 ถึง 1000 กก.', 400, 'VALIDATION_ERROR')
+
+    if target_weight_provided:
+        if goal == 'ลดน้ำหนัก' and target_weight >= user.weight:
+            return error_response('เป้าหมายลดน้ำหนักต้องต่ำกว่าน้ำหนักปัจจุบัน', 400, 'VALIDATION_ERROR')
+        if goal == 'เพิ่มน้ำหนัก' and target_weight <= user.weight:
+            return error_response('เป้าหมายเพิ่มน้ำหนักต้องสูงกว่าน้ำหนักปัจจุบัน', 400, 'VALIDATION_ERROR')
+        if goal == 'รักษาน้ำหนัก' and abs(target_weight - user.weight) > 0.5:
+            return error_response('เป้าหมายรักษาน้ำหนักต้องใกล้เคียงน้ำหนักปัจจุบันไม่เกิน 0.5 กก.', 400, 'VALIDATION_ERROR')
+
+        daily_adjustment = ((target_weight - user.weight) * 7700) / custom_days
+        if abs(daily_adjustment) > 1000:
+            return error_response(
+                'แผนเป้าหมายต้องปรับพลังงานไม่เกิน 1000 kcal/วัน '
+                'กรุณาเพิ่มจำนวนวันหรือปรับน้ำหนักเป้าหมาย',
+                400,
+                'UNSAFE_HEALTH_GOAL',
+            )
 
     custom_calories = (
         calc_calories_goal_custom(adjusted_tdee, user.weight, target_weight, custom_days, user.gender)
-        if target_weight is not None else None
+        if target_weight_provided else None
     )
+
+    calorie_floor = 1200 if user.gender == 'หญิง' else 1500
+    if target_weight_provided and (
+        custom_calories is None or custom_calories <= 0 or (
+            goal == 'ลดน้ำหนัก' and custom_calories < calorie_floor
+        )
+    ):
+        return error_response(
+            'พลังงานที่แนะนำต่ำกว่าขั้นต่ำที่ปลอดภัย '
+            'กรุณาเพิ่มจำนวนวันหรือปรับน้ำหนักเป้าหมาย',
+            400,
+            'UNSAFE_HEALTH_GOAL',
+        )
 
     user.health_goal = goal
     user.calories_goal = (
         custom_calories if custom_calories is not None
         else calc_calories_goal(adjusted_tdee, goal, user.gender)
     )
+    user.health_goal_start_weight = user.weight
     # เก็บอินพุตที่ใช้คำนวณไว้ด้วย (ไม่ใช่แค่ผลลัพธ์) ให้ฝั่ง Flutter โหลด
     # กลับมาเติมช่อง "เป้าหมายน้ำหนักที่ต้องการ"/"จำนวนวัน" ได้หลังรีเฟรช —
     # ไม่มี target_weight รอบนี้ (fallback ไปสูตร ±500) ก็เคลียร์ทิ้งไปด้วย
     # กันโชว์ค่าเก่าจากเป้าหมายก่อนหน้าที่ไม่เกี่ยวกันแล้ว
     user.health_goal_target_weight = target_weight
     user.health_goal_target_days = custom_days if target_weight is not None else None
+    user.health_goal_calorie_adjustment = calorie_adjustment
     user.health_goal_started_at = now_thailand.replace(tzinfo=None)
     # เปลี่ยนเป้าหมายได้อีกครั้งพอถึง 22:00 (มื้อเย็นปิดรับ ดู
     # MEAL_TIME_WINDOWS['dinner']) ของ "วันที่ N" นับจากวันนี้เป็นวันที่ 1 —
@@ -1797,9 +1888,11 @@ def save_health_goal():
         'status': 'ok',
         'health_goal': user.health_goal,
         'calories_goal': user.calories_goal,
+        'health_goal_start_weight': user.health_goal_start_weight,
         'health_goal_locked_until': user.health_goal_locked_until.isoformat(),
         'health_goal_target_weight': user.health_goal_target_weight,
         'health_goal_target_days': user.health_goal_target_days,
+        'health_goal_calorie_adjustment': user.health_goal_calorie_adjustment,
     }), 200
 
 
@@ -1811,13 +1904,36 @@ def get_user_health_goal(user_id):
     return jsonify({
         'health_goal': user.health_goal,
         'calories_goal': user.calories_goal,
+        'health_goal_start_weight': user.health_goal_start_weight,
         'health_goal_locked_until': locked_until.isoformat() if locked_until else None,
         'health_goal_target_weight': user.health_goal_target_weight,
         'health_goal_target_days': user.health_goal_target_days,
+        'health_goal_calorie_adjustment': user.health_goal_calorie_adjustment,
     }), 200
 
 
 def _serialize_goal_cycle(cycle):
+    logs = MealLog.query.options(selectinload(MealLog.items)).filter(
+        MealLog.user_id == cycle.user_id,
+        MealLog.log_date >= cycle.period_start.date(),
+        MealLog.log_date <= cycle.period_end.date(),
+    ).all()
+    eaten_calories_by_day = {}
+    for log in logs:
+        eaten_calories_by_day[log.log_date] = eaten_calories_by_day.get(log.log_date, 0.0) + sum(
+            float(item.calories_actual or 0)
+            for item in log.items
+            if item.is_eaten
+        )
+    calories_goal = float(cycle.calories_goal or 0)
+    daily_quota_excess_percent = max(
+        (
+            ((calories - calories_goal) / calories_goal) * 100
+            for calories in eaten_calories_by_day.values()
+            if calories_goal > 0 and calories > calories_goal
+        ),
+        default=0.0,
+    )
     return {
         'id': cycle.id,
         'health_goal': cycle.health_goal,
@@ -1827,8 +1943,12 @@ def _serialize_goal_cycle(cycle):
         'meals_logged': cycle.meals_logged,
         'meals_available': cycle.meals_available,
         'meals_over_quota': cycle.meals_over_quota,
+        'daily_quota_excess_percent': daily_quota_excess_percent,
         'success_ratio': cycle.success_ratio,
         'is_success': bool(cycle.is_success),
+        'weight_start': cycle.weight_start,
+        'weight_end': cycle.weight_end,
+        'weight_delta': cycle.weight_delta,
     }
 
 
@@ -3048,7 +3168,7 @@ MEAL_TYPES = ('breakfast', 'lunch', 'dinner')
 MEAL_TIME_WINDOWS = {'breakfast': (5, 10), 'lunch': (10, 15), 'dinner': (15, 22)}
 
 # สัดส่วนมื้อที่บันทึก+กินจริง ÷ มื้อที่มีให้เลือกได้จริงตลอดรอบ (ตามจำนวนวัน
-# ที่ผู้ใช้ตั้งไว้ ไม่ใช่ 7 วันตายตัว) ต้องถึงเท่านี้ถึงจะถือว่า "สำเร็จ"
+# ที่ผู้ใช้ตั้งไว้ ไม่ใช่ 7 วันตายตัว) เก็บไว้แสดงผลสรุปของรอบ
 # (health goal ที่เลือกไว้ตอนต้นรอบ)
 GOAL_SUCCESS_THRESHOLD = 0.6
 
@@ -3077,7 +3197,7 @@ def _finalize_expired_goal_cycle(user):
 
     period_end_naive = locked_until.replace(tzinfo=None)
     already = HealthGoalCycle.query.filter_by(user_id=user.id, period_end=period_end_naive).first()
-    if already is not None:
+    if already is not None and already.acknowledged_at is not None:
         return
 
     # health_goal_started_at คือจุดเริ่มจริง — locked_until ไม่ใช่ started_at+7
@@ -3101,42 +3221,89 @@ def _finalize_expired_goal_cycle(user):
     # ตอนเขียนเดิมทุกประการ (calories_actual รวมของมื้อ เทียบ calories_goal/3)
     logged_slots = set()
     meals_over_quota = 0
+    eaten_calories_by_day = {}
     for log in logs:
-        if not any(it.is_eaten for it in log.items):
+        eaten_items = [it for it in log.items if it.is_eaten]
+        if not eaten_items:
             continue
-        window = MEAL_TIME_WINDOWS[log.meal_type]
-        slot_start = datetime(log.log_date.year, log.log_date.month, log.log_date.day,
-                               window[0], tzinfo=timezone(timedelta(hours=7)))
-        if period_start <= slot_start <= locked_until:
-            logged_slots.add((log.log_date, log.meal_type))
-            if log.calories_goal and log.calories_goal > 0:
-                meal_total = sum(float(it.calories_actual or 0) for it in log.items)
-                if meal_total > log.calories_goal / 3:
-                    meals_over_quota += 1
+        logged_slots.add((log.log_date, log.meal_type))
+        eaten_calories_by_day[log.log_date] = eaten_calories_by_day.get(log.log_date, 0.0) + sum(
+            float(it.calories_actual or 0) for it in eaten_items
+        )
+        if log.calories_goal and log.calories_goal > 0:
+            meal_total = sum(float(it.calories_actual or 0) for it in eaten_items)
+            if meal_total > log.calories_goal / 3:
+                meals_over_quota += 1
 
-    meals_available = 0
-    d = period_start.date()
-    while d <= locked_until.date():
-        for window in MEAL_TIME_WINDOWS.values():
-            slot_start = datetime(d.year, d.month, d.day, window[0], tzinfo=timezone(timedelta(hours=7)))
-            if period_start <= slot_start <= locked_until:
-                meals_available += 1
-        d += timedelta(days=1)
+    # เป้าหมายสำเร็จหรือไม่ให้นับตามวันที่ของแผนเท่านั้น ไม่ตัดมื้อจากเวลา
+    # ที่เริ่มตั้งเป้าหมายหรือช่วงเวลาอาหาร ผู้ใช้กรอกวันไหน/มื้อไหนภายในรอบ
+    # ก็ได้ และแต่ละวันมี 3 มื้อที่นับได้เสมอ
+    meals_available = ((locked_until.date() - period_start.date()).days + 1) * len(MEAL_TYPES)
 
     meals_logged = len(logged_slots)
     ratio = (meals_logged / meals_available) if meals_available else 0.0
-    db.session.add(HealthGoalCycle(
+    weight_logs = WeightLog.query.filter(
+        WeightLog.user_id == user.id,
+        WeightLog.logged_at >= period_start.date(),
+        WeightLog.logged_at <= locked_until.date(),
+    ).order_by(WeightLog.logged_at.asc(), WeightLog.id.asc()).all()
+    # เก็บน้ำหนักโปรไฟล์ ณ ตอนเริ่มรอบแยกจากน้ำหนักเป้าหมาย
+    # และใช้ข้อมูลน้ำหนักย้อนหลังล่าสุดเป็นค่าน้ำหนักปัจจุบันของรอบ
+    target_weight = float(user.health_goal_target_weight) if user.health_goal_target_weight is not None else None
+    if user.health_goal_start_weight is not None:
+        weight_start = float(user.health_goal_start_weight)
+    elif weight_logs:
+        weight_start = float(weight_logs[0].weight)
+    else:
+        weight_start = float(user.weight) if user.weight is not None else None
+    weight_end = float(weight_logs[-1].weight) if weight_logs else None
+    weight_delta = (weight_end - weight_start) if weight_start is not None and weight_end is not None else None
+    daily_quota_excess_percent = max(
+        (
+            ((calories - float(user.calories_goal)) / float(user.calories_goal)) * 100
+            for calories in eaten_calories_by_day.values()
+            if user.calories_goal and calories > float(user.calories_goal)
+        ),
+        default=0.0,
+    )
+    cycle = already or HealthGoalCycle(
         user_id=user.id,
-        health_goal=user.health_goal,
-        calories_goal=user.calories_goal,
-        period_start=period_start.replace(tzinfo=None),
         period_end=period_end_naive,
-        meals_logged=meals_logged,
-        meals_available=meals_available,
-        meals_over_quota=meals_over_quota,
-        success_ratio=ratio,
-        is_success=ratio >= GOAL_SUCCESS_THRESHOLD,
-    ))
+    )
+    cycle.health_goal = user.health_goal
+    cycle.calories_goal = user.calories_goal
+    cycle.period_start = period_start.replace(tzinfo=None)
+    cycle.meals_logged = meals_logged
+    cycle.meals_available = meals_available
+    cycle.meals_over_quota = meals_over_quota
+    cycle.daily_quota_excess_percent = daily_quota_excess_percent
+    cycle.success_ratio = ratio
+    cycle.weight_start = weight_start
+    cycle.weight_end = weight_end
+    # เป้าหมายสำเร็จต้องผ่านเกณฑ์ 60% และไม่ให้มีมื้อใดเกินโควตา
+    # เป้าหมายลด/เพิ่มต้องถึงน้ำหนักปลายทาง; เป้าหมายรักษาต้องอยู่ใกล้
+    # น้ำหนักเริ่มต้นไม่เกิน 0.1 กก. หากยังไม่มีค่าเป้าหมาย (รอบเก่า) ให้
+    # ใช้ทิศทางการเปลี่ยนแปลงจากน้ำหนักเริ่มต้นแทน
+    goal_matches_weight = False
+    if weight_start is not None and weight_end is not None:
+        if user.health_goal == 'ลดน้ำหนัก':
+            goal_matches_weight = (
+                weight_end <= target_weight
+                if target_weight is not None
+                else weight_end < weight_start
+            )
+        elif user.health_goal == 'เพิ่มน้ำหนัก':
+            goal_matches_weight = (
+                weight_end >= target_weight
+                if target_weight is not None
+                else weight_end > weight_start
+            )
+        elif user.health_goal == 'รักษาน้ำหนัก':
+            goal_matches_weight = round(abs(weight_end - weight_start), 1) <= 0.1
+    # ต้องบันทึกมื้อถึง 60% และน้ำหนักต้องสอดคล้องกับเป้าหมายเสมอ ส่วนกรณี
+    # กินเกิน kcal แต่ทำให้น้ำหนักไปถูกทิศทางยังถือว่าสำเร็จได้ หากมื้อถึงเกณฑ์
+    cycle.is_success = ratio >= GOAL_SUCCESS_THRESHOLD and goal_matches_weight
+    db.session.add(cycle)
     try:
         db.session.commit()
     except IntegrityError:
@@ -3533,7 +3700,6 @@ def weight_logs():
         log = WeightLog(user_id=user.id, weight=weight, logged_at=logged_at)
         db.session.add(log)
 
-    _sync_user_weight_to_latest_log(user)
     try:
         db.session.commit()
     except IntegrityError:
@@ -3545,7 +3711,6 @@ def weight_logs():
         db.session.rollback()
         log = WeightLog.query.filter_by(user_id=user.id, logged_at=logged_at).first()
         log.weight = weight
-        _sync_user_weight_to_latest_log(user)
         db.session.commit()
     return jsonify(_serialize_weight_log(log)), 200
 

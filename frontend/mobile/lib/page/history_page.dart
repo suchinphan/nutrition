@@ -153,10 +153,7 @@ class _HistoryPageState extends State<HistoryPage> {
   // สดจาก auth.user แทนทุกจุดในหน้านี้ให้ตรงกันเสมอ
   double? get _currentCaloriesGoal => (auth.user?['calories_goal'] as num?)?.toDouble();
 
-  // กราฟ+ประวัติเดิมสลับได้แค่ "สัปดาห์" (7 วัน)/"เดือน" (30 วัน) นับย้อน
-  // จากวันนี้เสมอ ไม่เกี่ยวกับเป้าหมายสุขภาพเลย — ผู้ใช้ขอให้เปลี่ยนเป็นตาม
-  // จำนวนวันของเป้าหมายที่ใช้งานอยู่แทน (วันแรกที่ตั้งเป้าหมาย ถึงวันนี้)
-  // ไม่มีเป้าหมายเลยก็ fallback ไปช่วง 7 วันย้อนหลังแบบเดิม
+  // ช่วงวันที่ของกราฟยังอิงเป้าหมายสุขภาพปัจจุบัน ส่วนรายการประวัติแสดงทุกวันที่มีบันทึก
   DateTime get _rangeFrom => _goalStartDate ?? _todayBangkok.subtract(const Duration(days: 6));
 
   // ไม่ให้ยาวเกินวันหมดเขตของเป้าหมาย (health_goal_locked_until) เผื่อรอบ
@@ -177,7 +174,7 @@ class _HistoryPageState extends State<HistoryPage> {
       _loading = true;
       _error = null;
     });
-    final result = await _mealLogService.fetchLogs(from: _rangeFrom, to: _rangeTo);
+    final result = await _mealLogService.fetchLogs();
     if (!mounted || myGeneration != _loadGeneration) return;
     result.when(
       ok: (logs) {
@@ -476,6 +473,13 @@ class _HistoryPageState extends State<HistoryPage> {
             'บันทึกมื้ออาหารไป ${cycle.mealsLogged} จาก ${cycle.mealsAvailable} มื้อที่มีให้เลือก ($percent%)',
             style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray900),
           ),
+          if (cycle.weightStart != null && cycle.weightEnd != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              'น้ำหนัก ${cycle.weightStart!.toStringAsFixed(1)} -> ${cycle.weightEnd!.toStringAsFixed(1)} กก.',
+              style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray900),
+            ),
+          ],
           if (cycle.mealsOverQuota > 0) ...[
             const SizedBox(height: 2),
             Text(

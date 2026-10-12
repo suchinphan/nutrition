@@ -51,7 +51,12 @@ String _ymd(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
 abstract class AiRecommendService {
-  Future<Result<AiRecommendResult>> fetchRecommendations({required String category, int limit = 5, DateTime? date});
+  Future<Result<AiRecommendResult>> fetchRecommendations({
+    required String category,
+    int limit = 5,
+    DateTime? date,
+    bool randomize = false,
+  });
 }
 
 class HttpAiRecommendService implements AiRecommendService {
@@ -59,10 +64,20 @@ class HttpAiRecommendService implements AiRecommendService {
   HttpAiRecommendService(this._client);
 
   @override
-  Future<Result<AiRecommendResult>> fetchRecommendations({required String category, int limit = 5, DateTime? date}) {
+  Future<Result<AiRecommendResult>> fetchRecommendations({
+    required String category,
+    int limit = 5,
+    DateTime? date,
+    bool randomize = false,
+  }) {
     return _client.postJson<AiRecommendResult>(
       '/api/ai/recommend',
-      body: {'category': category, 'limit': limit, if (date != null) 'date': _ymd(date)},
+      body: {
+        'category': category,
+        'limit': limit,
+        'randomize': randomize,
+        if (date != null) 'date': _ymd(date),
+      },
       decode: (json) {
         final map = json as Map<String, dynamic>;
         return AiRecommendResult(

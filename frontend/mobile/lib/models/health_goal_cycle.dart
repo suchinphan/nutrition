@@ -16,8 +16,12 @@ class HealthGoalCycle {
   // บล็อกการบันทึกมื้ออาหารจริง ผู้ใช้ขอให้เอาข้อจำกัดออกแล้วเก็บไว้สรุปผล
   // ตอนจบรอบแทน (ดู backend api._finalize_expired_goal_cycle)
   final int mealsOverQuota;
+  final double dailyQuotaExcessPercent;
   final double successRatio;
   final bool isSuccess;
+  final double? weightStart;
+  final double? weightEnd;
+  final double? weightDelta;
 
   const HealthGoalCycle({
     required this.id,
@@ -28,8 +32,12 @@ class HealthGoalCycle {
     required this.mealsLogged,
     required this.mealsAvailable,
     required this.mealsOverQuota,
+    required this.dailyQuotaExcessPercent,
     required this.successRatio,
     required this.isSuccess,
+    required this.weightStart,
+    required this.weightEnd,
+    required this.weightDelta,
   });
 
   factory HealthGoalCycle.fromJson(Map<String, dynamic> json) => HealthGoalCycle(
@@ -41,7 +49,11 @@ class HealthGoalCycle {
     mealsLogged: json['meals_logged'] as int,
     mealsAvailable: json['meals_available'] as int,
     mealsOverQuota: (json['meals_over_quota'] as num?)?.toInt() ?? 0,
+    dailyQuotaExcessPercent: (json['daily_quota_excess_percent'] as num?)?.toDouble() ?? 0,
     successRatio: (json['success_ratio'] as num).toDouble(),
     isSuccess: json['is_success'] as bool,
+    weightStart: (json['weight_start'] as num?)?.toDouble(),
+    weightEnd: (json['weight_end'] as num?)?.toDouble(),
+    weightDelta: (json['weight_delta'] as num?)?.toDouble(),
   );
 }

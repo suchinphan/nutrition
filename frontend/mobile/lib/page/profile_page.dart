@@ -41,7 +41,8 @@ int? _ageFromDob(DateTime? dob) {
   if (dob == null) return null;
   final now = DateTime.now();
   var age = now.year - dob.year;
-  if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) age -= 1;
+  if (now.month < dob.month || (now.month == dob.month && now.day < dob.day))
+    age -= 1;
   return age < 0 ? 0 : age;
 }
 
@@ -138,9 +139,17 @@ class _ProfilePageState extends State<ProfilePage> {
   // เป็นชุดต่อเป้าหมาย (ลด/รักษา/เพิ่มน้ำหนัก) ไม่ใช้ตัวแปรร่วมตัวเดียว —
   // ผู้ใช้รายงานจริง: สลับดูเป้าหมายอื่นแล้วเลขที่กรอก/ผลคำนวณของอันเดิมหาย/
   // ถูกทับ ทั้งที่ควรเป็นคนละชุดข้อมูลแยกกัน
-  final _targetWeightCtrls = {for (final g in _goalOptions) g: TextEditingController()};
-  final _dietDaysCtrls = {for (final g in _goalOptions) g: TextEditingController()};
+  final _targetWeightCtrls = {
+    for (final g in _goalOptions) g: TextEditingController(),
+  };
+  final _dietDaysCtrls = {
+    for (final g in _goalOptions) g: TextEditingController(),
+  };
   final _dietCalculated = {for (final g in _goalOptions) g: false};
+  final Map<String, int?> _dietCalorieAdjustments = {
+    'ลดน้ำหนัก': null,
+    'เพิ่มน้ำหนัก': null,
+  };
   // การ์ดเป้าหมาย (ลด/รักษา/เพิ่มน้ำหนัก) ไม่โชว์ kcal ทันทีที่กดคำนวณ
   // BMR/TDEE อีกต่อไป — ต้องกรอกเป้าหมายน้ำหนัก+จำนวนวันแล้วกด "คำนวณ" ใน
   // กล่องวางแผนพลังงานของการ์ดนั้นก่อนถึงจะเห็นตัวเลข (ผู้ใช้ยืนยันชัดเจน:
@@ -270,7 +279,11 @@ class _ProfilePageState extends State<ProfilePage> {
         // rebuild) ไม่งั้น _editFormKey.currentContext ยังเป็น null อยู่
         WidgetsBinding.instance.addPostFrameCallback((_) {
           final ctx = _editFormKey.currentContext;
-          if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300));
+          if (ctx != null)
+            Scrollable.ensureVisible(
+              ctx,
+              duration: const Duration(milliseconds: 300),
+            );
         });
       }
       // เดิมยิง 3 คำขอพร้อมกันตอนเปิดหน้า (medical-lists/reports/weight-logs)
@@ -293,15 +306,23 @@ class _ProfilePageState extends State<ProfilePage> {
     final u = context.read<AuthService>().user ?? {};
     _nameCtrl.text = u['name']?.toString() ?? '';
     _surnameCtrl.text = u['surname']?.toString() ?? '';
-    _gender = _genderOptions.contains(u['gender']?.toString()) ? u['gender'].toString() : null;
+    _gender = _genderOptions.contains(u['gender']?.toString())
+        ? u['gender'].toString()
+        : null;
     final dobStr = u['date_of_birth']?.toString();
-    _dob = (dobStr != null && dobStr.isNotEmpty) ? DateTime.tryParse(dobStr) : null;
+    _dob = (dobStr != null && dobStr.isNotEmpty)
+        ? DateTime.tryParse(dobStr)
+        : null;
     _weightCtrl.text = u['weight']?.toString() ?? '';
     _heightCtrl.text = u['height']?.toString() ?? '';
-    _activity = _activityOptions.contains(u['activity_level']?.toString()) ? u['activity_level'].toString() : null;
+    _activity = _activityOptions.contains(u['activity_level']?.toString())
+        ? u['activity_level'].toString()
+        : null;
     _diseases = _asStringList(u['chronic_diseases']);
     _allergies = _asStringList(u['food_allergies']);
-    _pendingGoal = _goalOptions.contains(u['health_goal']?.toString()) ? u['health_goal'].toString() : null;
+    _pendingGoal = _goalOptions.contains(u['health_goal']?.toString())
+        ? u['health_goal'].toString()
+        : null;
     // ผู้ใช้รายงานจริง: กรอกเป้าหมายน้ำหนัก+จำนวนวัน กดคำนวณ+บันทึกเป้าหมาย
     // ไปแล้ว แต่รีเฟรช/เปิดแอปใหม่ ช่องในกล่อง "วางแผนพลังงาน" กลับว่างเปล่า
     // เพราะ _targetWeightCtrls/_dietDaysCtrls เป็นแค่ text field ในหน่วยความจำ
@@ -321,7 +342,15 @@ class _ProfilePageState extends State<ProfilePage> {
       _dietDaysCtrls[g]!.clear();
       _dietCalculated[g] = false;
     }
+    _dietCalorieAdjustments.updateAll((_, __) => null);
     if (_pendingGoal != null) {
+      final savedAdjustment = int.tryParse(
+        u['health_goal_calorie_adjustment']?.toString() ?? '',
+      );
+      if ((_pendingGoal == 'ลดน้ำหนัก' || _pendingGoal == 'เพิ่มน้ำหนัก') &&
+          (savedAdjustment == 500 || savedAdjustment == 1000)) {
+        _dietCalorieAdjustments[_pendingGoal!] = savedAdjustment;
+      }
       final savedTargetWeight = u['health_goal_target_weight'];
       final savedTargetDays = u['health_goal_target_days'];
       if (savedTargetWeight != null && savedTargetDays != null) {
@@ -330,32 +359,60 @@ class _ProfilePageState extends State<ProfilePage> {
         _dietCalculated[_pendingGoal!] = true;
       }
     }
+    if (_pendingGoal == 'รักษาน้ำหนัก') {
+      final targetCtrl = _targetWeightCtrls[_pendingGoal]!;
+      final daysCtrl = _dietDaysCtrls[_pendingGoal]!;
+      final currentWeight = double.tryParse(_weightCtrl.text.trim());
+      if (targetCtrl.text.trim().isEmpty && currentWeight != null) {
+        targetCtrl.text = currentWeight.toStringAsFixed(1);
+      }
+      if (daysCtrl.text.trim().isEmpty) {
+        daysCtrl.text = '30';
+      }
+    }
     // ผู้ใช้รายงานจริง: ปิดแอปแล้วเปิดใหม่ผลลัพธ์หายไป เพราะ _bmrCalculated
     // เป็นแค่ state ชั่วคราวในหน่วยความจำ ไม่เคยคงอยู่ข้ามเซสชัน — ข้อมูลที่ใช้
     // คำนวณ (เพศ/วันเกิด/น้ำหนัก/ส่วนสูง/กิจกรรม) ถ้าครบทุกช่องก็คำนวณโชว์ได้
     // เลยไม่ต้องกดซ้ำทุกครั้งที่เปิดแอป
-    final hasFullBmrData = _gender != null && _dob != null && _weightCtrl.text.isNotEmpty && _heightCtrl.text.isNotEmpty && _activity != null;
+    final hasFullBmrData =
+        _gender != null &&
+        _dob != null &&
+        _weightCtrl.text.isNotEmpty &&
+        _heightCtrl.text.isNotEmpty &&
+        _activity != null;
     _bmrCalculated = hasFullBmrData;
-    final hasBmiData = _weightCtrl.text.isNotEmpty && _heightCtrl.text.isNotEmpty;
+    final hasBmiData =
+        _weightCtrl.text.isNotEmpty && _heightCtrl.text.isNotEmpty;
     _bmiCalculated = hasBmiData;
   }
 
   List<String> _asStringList(dynamic v) {
-    if (v is List) return v.map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+    if (v is List)
+      return v.map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
     if (v is String && v.trim().isNotEmpty && v.trim() != 'ไม่มี') {
-      return v.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      return v
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
     }
     return [];
   }
 
   Future<void> _fetchMedicalLists() async {
     try {
-      final resp = await http.get(Uri.parse('${getApiBase()}/api/medical-lists')).timeout(const Duration(seconds: 6));
+      final resp = await http
+          .get(Uri.parse('${getApiBase()}/api/medical-lists'))
+          .timeout(const Duration(seconds: 6));
       if (resp.statusCode == 200 && mounted) {
         final j = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
-          _canonicalDiseases = ((j['diseases'] as List?) ?? []).map((e) => e.toString()).toList();
-          _canonicalAllergies = ((j['allergies'] as List?) ?? []).map((e) => e.toString()).toList();
+          _canonicalDiseases = ((j['diseases'] as List?) ?? [])
+              .map((e) => e.toString())
+              .toList();
+          _canonicalAllergies = ((j['allergies'] as List?) ?? [])
+              .map((e) => e.toString())
+              .toList();
         });
       }
     } catch (_) {}
@@ -415,21 +472,27 @@ class _ProfilePageState extends State<ProfilePage> {
 
     final user = AuthService().user;
     final currentWeight = double.tryParse(user?['weight']?.toString() ?? '');
-    final targetWeight = double.tryParse(user?['health_goal_target_weight']?.toString() ?? '');
+    final targetWeight = double.tryParse(
+      user?['health_goal_target_weight']?.toString() ?? '',
+    );
     // ช่วงน้ำหนักที่ "ใกล้เคียง" เป้าหมาย — ครอบทั้งน้ำหนักปัจจุบันกับน้ำหนัก
     // เป้าหมาย บวกเผื่อความผันผวนรายวันปกติ ±5 กก. ไม่ใช้เกณฑ์ต่างกันตาม
     // ประเภทเป้าหมาย (ลด/รักษา/เพิ่ม) เพราะ min/max ของ 2 ค่านี้ครอบคลุมทั้ง
     // 3 แบบอยู่แล้วในสูตรเดียว (ผู้ใช้รายงานจริง)
     const tolerance = 5.0;
     final lowerBound = (currentWeight != null && targetWeight != null)
-        ? (currentWeight < targetWeight ? currentWeight : targetWeight) - tolerance
+        ? (currentWeight < targetWeight ? currentWeight : targetWeight) -
+              tolerance
         : null;
     final upperBound = (currentWeight != null && targetWeight != null)
-        ? (currentWeight > targetWeight ? currentWeight : targetWeight) + tolerance
+        ? (currentWeight > targetWeight ? currentWeight : targetWeight) +
+              tolerance
         : null;
 
     final ctrl = TextEditingController(
-      text: _weightLogs.isEmpty ? '' : _weightLogs.last.weight.toStringAsFixed(1),
+      text: _weightLogs.isEmpty
+          ? ''
+          : _weightLogs.last.weight.toStringAsFixed(1),
     );
     bool submitting = false;
     String? error;
@@ -437,7 +500,9 @@ class _ProfilePageState extends State<ProfilePage> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
@@ -450,16 +515,28 @@ class _ProfilePageState extends State<ProfilePage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('บันทึกน้ำหนักวันนี้', style: AppTextStyles.headingMedium.copyWith(color: AppColors.gray900)),
+              Text(
+                'บันทึกน้ำหนักวันนี้',
+                style: AppTextStyles.headingMedium.copyWith(
+                  color: AppColors.gray900,
+                ),
+              ),
               const SizedBox(height: 16),
               if (error != null) ...[
-                Text(error!, style: AppTextStyles.bodySmall.copyWith(color: AppColors.coral600)),
+                Text(
+                  error!,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.coral600,
+                  ),
+                ),
                 const SizedBox(height: 8),
               ],
               TextField(
                 controller: ctrl,
                 autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: _decoration('น้ำหนัก', suffixText: 'กก.'),
               ),
               const SizedBox(height: 16),
@@ -471,21 +548,29 @@ class _ProfilePageState extends State<ProfilePage> {
                       : () async {
                           final weight = double.tryParse(ctrl.text.trim());
                           if (weight == null || weight <= 0 || weight > 1000) {
-                            setSheetState(() => error = 'กรุณากรอกน้ำหนักให้ถูกต้อง (0-1000 กก.)');
+                            setSheetState(
+                              () => error =
+                                  'กรุณากรอกน้ำหนักให้ถูกต้อง (0-1000 กก.)',
+                            );
                             return;
                           }
-                          if (lowerBound != null && upperBound != null &&
+                          if (lowerBound != null &&
+                              upperBound != null &&
                               (weight < lowerBound || weight > upperBound)) {
-                            setSheetState(() => error =
-                                'น้ำหนักที่กรอกไม่ใกล้เคียงกับเป้าหมายที่ตั้งไว้ '
-                                '(ควรอยู่ระหว่าง ${lowerBound.toStringAsFixed(1)}-${upperBound.toStringAsFixed(1)} กก.)');
+                            setSheetState(
+                              () => error =
+                                  'น้ำหนักที่กรอกไม่ใกล้เคียงกับเป้าหมายที่ตั้งไว้ '
+                                  '(ควรอยู่ระหว่าง ${lowerBound.toStringAsFixed(1)}-${upperBound.toStringAsFixed(1)} กก.)',
+                            );
                             return;
                           }
                           setSheetState(() {
                             submitting = true;
                             error = null;
                           });
-                          final result = await _weightLogService.logWeight(weight: weight);
+                          final result = await _weightLogService.logWeight(
+                            weight: weight,
+                          );
                           result.when(
                             ok: (_) {
                               if (ctx.mounted) Navigator.of(ctx).pop();
@@ -498,15 +583,26 @@ class _ProfilePageState extends State<ProfilePage> {
                         },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.teal500,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: submitting
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
-                      : const Text('บันทึก', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                      : const Text(
+                          'บันทึก',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -551,18 +647,25 @@ class _ProfilePageState extends State<ProfilePage> {
     if (picked == null || !mounted) return;
     final originalBytes = await picked.readAsBytes();
     if (!mounted) return;
-    final cropped = await Navigator.of(context, rootNavigator: true).push<Uint8List>(
-      MaterialPageRoute(builder: (_) => AvatarCropPage(imageBytes: originalBytes)),
-    );
+    final cropped = await Navigator.of(context, rootNavigator: true)
+        .push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => AvatarCropPage(imageBytes: originalBytes),
+          ),
+        );
     if (cropped == null || !mounted) return;
     setState(() => _uploadingAvatar = true);
     final error = await context.read<AuthService>().uploadAvatar(cropped);
     if (!mounted) return;
     setState(() => _uploadingAvatar = false);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('อัปเดตรูปโปรไฟล์แล้ว')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('อัปเดตรูปโปรไฟล์แล้ว')));
     }
   }
 
@@ -609,7 +712,11 @@ class _ProfilePageState extends State<ProfilePage> {
     // — คงฟอร์มแก้ไขไว้ให้กดบันทึกซ้ำได้ทันที ไม่ใช่ปิดฟอร์มทิ้งข้อมูล
     if (!synced) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('บันทึกไม่สำเร็จ เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่')),
+        const SnackBar(
+          content: Text(
+            'บันทึกไม่สำเร็จ เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่',
+          ),
+        ),
       );
       return false;
     }
@@ -623,13 +730,15 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() {
       _editing = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('บันทึกข้อมูลแล้ว')));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('บันทึกข้อมูลแล้ว')));
     return true;
   }
 
-  Future<void> _saveGoal() async {
+  Future<void> _saveGoal(double? tdee) async {
     final goal = _pendingGoal;
-    if (goal == null) return;
+    if (goal == null || tdee == null) return;
     // ต้องกด "คำนวณ" ในกล่องวางแผนพลังงานของเป้าหมายนี้ก่อนเสมอ ถึงจะบันทึก
     // ได้ (ปุ่ม "บันทึกเป้าหมาย" เองก็ถูก disable ไว้แล้วตามเงื่อนไขนี้ เช็ค
     // ซ้ำตรงนี้กันเรียกฟังก์ชันตรงๆ ผ่านทางอื่นข้ามเงื่อนไขไป) — เดิมเช็คแค่
@@ -640,10 +749,13 @@ class _ProfilePageState extends State<ProfilePage> {
     // ด้วย _dietPlanValidationError() ตรงนี้ไปด้วยเลย
     final weightVal = double.tryParse(_weightCtrl.text.trim());
     final validationError = _dietCalculated[goal] == true && weightVal != null
-        ? _dietPlanValidationError(goal, weightVal)
+        ? (_dietPlanValidationError(goal, weightVal) ??
+              _dietSafetyError(goal, weightVal, tdee))
         : 'กรุณากรอกเป้าหมายน้ำหนัก/จำนวนวัน แล้วกด "คำนวณ" ก่อนบันทึกเป้าหมาย';
     if (validationError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(validationError)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(validationError)));
       return;
     }
     // จำนวนวันที่กรอกในกล่องวางแผนพลังงาน กำหนดว่าจะล็อกเป้าหมายนี้ไว้กี่วัน
@@ -654,7 +766,9 @@ class _ProfilePageState extends State<ProfilePage> {
     // (ผู้ใช้รายงานจริง: ตัวเลขที่พรีวิวไว้ในหน้าโปรไฟล์ไม่ตรงกับที่แดชบอร์ด
     // โชว์จริงเลย เพราะ backend ไม่เคยรู้จักน้ำหนักเป้าหมาย/จำนวนวันมาก่อน)
     final days = int.tryParse(_dietDaysCtrls[goal]?.text.trim() ?? '');
-    final targetWeight = double.tryParse(_targetWeightCtrls[goal]?.text.trim() ?? '');
+    final targetWeight = double.tryParse(
+      _targetWeightCtrls[goal]?.text.trim() ?? '',
+    );
     final auth = context.read<AuthService>();
     final token = auth.token;
     if (token == null) return;
@@ -662,8 +776,16 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       final resp = await http.post(
         Uri.parse('${getApiBase()}/api/user/health-goal'),
-        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
-        body: jsonEncode({'health_goal': goal, 'days': days, 'target_weight': targetWeight}),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'health_goal': goal,
+          'days': days,
+          'target_weight': targetWeight,
+          'calorie_adjustment': _dietCalorieAdjustments[goal],
+        }),
       );
       if (!mounted) return;
       if (resp.statusCode == 200) {
@@ -678,31 +800,34 @@ class _ProfilePageState extends State<ProfilePage> {
         await auth.saveUser({
           'health_goal': j['health_goal'],
           'calories_goal': j['calories_goal'],
+          'health_goal_start_weight': j['health_goal_start_weight'],
           'health_goal_locked_until': j['health_goal_locked_until'],
           'health_goal_target_weight': j['health_goal_target_weight'],
           'health_goal_target_days': j['health_goal_target_days'],
+          'health_goal_calorie_adjustment':
+              j['health_goal_calorie_adjustment'],
         }, syncToServer: false);
         if (!mounted) return;
-        // เดิมโชว์แค่ "บันทึกเป้าหมายแล้ว" เฉยๆ ไม่บอกว่าบันทึกอะไรไป
-        // (บั๊กที่ผู้ใช้รายงานจริง — กดแล้วไม่รู้ว่าเซฟอะไร) ใส่ชื่อเป้าหมาย
-        // + เป้าหมายแคลอรีที่คำนวณได้จริงจาก response ให้เห็นชัดว่ากดอันไหนไป
-        final savedGoal = j['health_goal']?.toString() ?? goal;
-        final savedCalories = j['calories_goal'];
-        final calorieText = savedCalories != null ? ' (${savedCalories.toString()} kcal/วัน)' : '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('บันทึกเป้าหมาย: $savedGoal$calorieText แล้ว')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('บันทึกเป้าหมายสำเร็จ')));
       } else {
         String msg = 'บันทึกเป้าหมายไม่สำเร็จ';
         try {
           final j = jsonDecode(resp.body);
           if (j is Map && j['error'] != null) msg = j['error'].toString();
         } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        if (!msg.contains('เปลี่ยนเป้าหมายได้อีกครั้งในวันที่')) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(msg)));
+        }
       }
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ไม่สามารถติดต่อเซิร์ฟเวอร์ได้')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ไม่สามารถติดต่อเซิร์ฟเวอร์ได้')),
+      );
     } finally {
       if (mounted) setState(() => _savingGoal = false);
     }
@@ -717,7 +842,9 @@ class _ProfilePageState extends State<ProfilePage> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
@@ -730,13 +857,26 @@ class _ProfilePageState extends State<ProfilePage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('รายงานปัญหาใหม่', style: AppTextStyles.headingMedium.copyWith(color: AppColors.gray900)),
+              Text(
+                'รายงานปัญหาใหม่',
+                style: AppTextStyles.headingMedium.copyWith(
+                  color: AppColors.gray900,
+                ),
+              ),
               const SizedBox(height: 16),
               if (error != null) ...[
-                Text(error!, style: AppTextStyles.bodySmall.copyWith(color: AppColors.coral600)),
+                Text(
+                  error!,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.coral600,
+                  ),
+                ),
                 const SizedBox(height: 8),
               ],
-              TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'หัวข้อ')),
+              TextField(
+                controller: titleCtrl,
+                decoration: const InputDecoration(labelText: 'หัวข้อ'),
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: messageCtrl,
@@ -753,14 +893,20 @@ class _ProfilePageState extends State<ProfilePage> {
                           final title = titleCtrl.text.trim();
                           final message = messageCtrl.text.trim();
                           if (title.isEmpty || message.isEmpty) {
-                            setSheetState(() => error = 'กรุณากรอกหัวข้อและรายละเอียด');
+                            setSheetState(
+                              () => error = 'กรุณากรอกหัวข้อและรายละเอียด',
+                            );
                             return;
                           }
                           setSheetState(() {
                             submitting = true;
                             error = null;
                           });
-                          final result = await _reportService.submitReportProblem(title: title, message: message);
+                          final result = await _reportService
+                              .submitReportProblem(
+                                title: title,
+                                message: message,
+                              );
                           result.when(
                             ok: (_) {
                               if (ctx.mounted) Navigator.of(ctx).pop();
@@ -773,15 +919,26 @@ class _ProfilePageState extends State<ProfilePage> {
                         },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.teal500,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: submitting
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
-                      : const Text('ส่งเรื่อง', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                      : const Text(
+                          'ส่งเรื่อง',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -794,14 +951,19 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _openTicketChat(Report report) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TicketChatPage(report: report, reportService: _reportService)),
+      MaterialPageRoute(
+        builder: (_) =>
+            TicketChatPage(report: report, reportService: _reportService),
+      ),
     );
     if (mounted) _loadReports();
   }
 
   void _openTicketHistory() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TicketHistoryPage(reportService: _reportService)),
+      MaterialPageRoute(
+        builder: (_) => TicketHistoryPage(reportService: _reportService),
+      ),
     );
   }
 
@@ -812,8 +974,14 @@ class _ProfilePageState extends State<ProfilePage> {
         title: const Text('ยืนยัน'),
         content: const Text('คุณต้องการออกจากระบบหรือไม่?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('ไม่')),
-          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('ใช่')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('ไม่'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('ใช่'),
+          ),
         ],
       ),
     );
@@ -854,28 +1022,41 @@ class _ProfilePageState extends State<ProfilePage> {
           icon: Icons.person_outline,
           title: 'เข้าสู่ระบบเพื่อดูโปรไฟล์ของคุณ',
           ctaLabel: 'เข้าสู่ระบบ',
-          onCta: () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(builder: (_) => const LoginPage())),
+          onCta: () => Navigator.of(
+            context,
+            rootNavigator: true,
+          ).push(MaterialPageRoute(builder: (_) => const LoginPage())),
         ),
       );
     }
 
     final u = auth.user ?? {};
-    final fullName = [u['name']?.toString() ?? '', u['surname']?.toString() ?? '']
-        .where((s) => s.trim().isNotEmpty)
-        .join(' ');
-    final displayName = fullName.isEmpty ? (u['username']?.toString() ?? '-') : fullName;
+    final fullName = [
+      u['name']?.toString() ?? '',
+      u['surname']?.toString() ?? '',
+    ].where((s) => s.trim().isNotEmpty).join(' ');
+    final displayName = fullName.isEmpty
+        ? (u['username']?.toString() ?? '-')
+        : fullName;
     final email = u['email']?.toString() ?? '-';
 
     final weight = double.tryParse(u['weight']?.toString() ?? '');
     final height = double.tryParse(u['height']?.toString() ?? '');
     final dobStr = u['date_of_birth']?.toString();
-    final dob = (dobStr != null && dobStr.isNotEmpty) ? DateTime.tryParse(dobStr) : null;
+    final dob = (dobStr != null && dobStr.isNotEmpty)
+        ? DateTime.tryParse(dobStr)
+        : null;
     final age = _ageFromDob(dob);
     final bmi = bmi_calc.calcBmi(weight, height);
     final bmiLabel = bmi_calc.bmiStatus(bmi);
 
     final gender = u['gender']?.toString();
-    final bmr = bmi_calc.calcBmr(weight: weight, height: height, age: age, gender: gender);
+    final bmr = bmi_calc.calcBmr(
+      weight: weight,
+      height: height,
+      age: age,
+      gender: gender,
+    );
     final tdee = bmi_calc.calcTdee(
       weight: weight,
       height: height,
@@ -889,7 +1070,9 @@ class _ProfilePageState extends State<ProfilePage> {
         ? DateTime.tryParse(lockedUntilStr)
         : null;
     final goalLockedUntil =
-        (lockedUntilRaw != null && DateTime.now().isBefore(lockedUntilRaw)) ? lockedUntilRaw : null;
+        (lockedUntilRaw != null && DateTime.now().isBefore(lockedUntilRaw))
+        ? lockedUntilRaw
+        : null;
 
     // ปรับ TDEE ตามโรคประจำตัวก่อนเอาไปคิดเป้าหมายสุขภาพ (การ์ดลด/รักษา/
     // เพิ่มน้ำหนัก + กล่องวางแผนพลังงาน) — ใช้เฉพาะตรงนี้ ไม่กระทบกล่อง BMR/
@@ -899,7 +1082,10 @@ class _ProfilePageState extends State<ProfilePage> {
     // เคยเอามาใช้ตรงนี้) แพ้อาหารไม่มีสูตรปรับแคลอรี่ที่มีหลักฐานรองรับ (ทั้ง
     // 2 ไฟล์ที่มีอยู่ก็ไม่ได้เอาแพ้อาหารไปคิดตัวเลข แค่โชว์ไว้เฉยๆ) เลยไม่ใส่
     final diseaseAdjustment = bmi_calc.diseaseAdjustmentFactor(_diseases);
-    final adjustedTdeeForGoals = tdee != null ? tdee * (1.0 + diseaseAdjustment) : null;
+    final adjustedTdeeForGoals = tdee != null
+        ? tdee * (1.0 + diseaseAdjustment)
+        : null;
+    final effectiveTdeeForGoals = adjustedTdeeForGoals ?? tdee;
     // ผู้ใช้รายงานจริง: ตัวเลข kcal ที่การ์ดเป้าหมาย/กล่องวางแผนพลังงานโชว์
     // ไม่ตรงกับที่แดชบอร์ดโชว์เลย ทั้งที่เป็นเป้าหมายเดียวกันที่ล็อกไว้อยู่
     // — เพราะสองจุดนี้ (goalCard/_buildDietPlanBox) คำนวณสดจาก tdee/weight
@@ -909,7 +1095,9 @@ class _ProfilePageState extends State<ProfilePage> {
     // (แก้ได้ตลอด ไม่ผูกกับ isLocked) ตัวเลขสองจุดนี้จะเริ่มเพี้ยนจากที่บันทึก
     // จริงทันที — เป้าหมายที่ล็อกอยู่ต้องโชว์ค่าที่บันทึกจริง (u['calories_goal'])
     // ไม่ใช่คำนวณสดซ้ำ ถึงจะตรงกับแดชบอร์ดเสมอ
-    final savedCaloriesGoal = double.tryParse(u['calories_goal']?.toString() ?? '');
+    final savedCaloriesGoal = double.tryParse(
+      u['calories_goal']?.toString() ?? '',
+    );
 
     return Scaffold(
       backgroundColor: AppColors.gray50,
@@ -928,10 +1116,20 @@ class _ProfilePageState extends State<ProfilePage> {
             const SizedBox(height: 12),
             _buildStatsRow(age, bmi, bmiLabel, weight, height),
             const SizedBox(height: 16),
-            if (_editing) ...[KeyedSubtree(key: _editFormKey, child: _buildEditForm()), const SizedBox(height: 16)],
+            if (_editing) ...[
+              KeyedSubtree(key: _editFormKey, child: _buildEditForm()),
+              const SizedBox(height: 16),
+            ],
             _buildBmiCalculatorBox(),
             _buildBmrCalculatorBox(),
-            _buildGoalSection(bmr, adjustedTdeeForGoals, weight, goalLockedUntil, savedCaloriesGoal),
+            _buildGoalSection(
+              bmr,
+              effectiveTdeeForGoals,
+              tdee,
+              weight,
+              goalLockedUntil,
+              savedCaloriesGoal,
+            ),
             const SizedBox(height: 16),
             _buildWeightHistorySection(u['health_goal']?.toString()),
             const SizedBox(height: 16),
@@ -942,13 +1140,23 @@ class _ProfilePageState extends State<ProfilePage> {
             Center(
               child: TextButton(
                 onPressed: () => _openChangePassword(u),
-                child: Text('เปลี่ยนรหัสผ่าน', style: AppTextStyles.bodyMedium.copyWith(color: AppColors.gray600)),
+                child: Text(
+                  'เปลี่ยนรหัสผ่าน',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.gray600,
+                  ),
+                ),
               ),
             ),
             Center(
               child: TextButton(
                 onPressed: _logout,
-                child: Text('ออกจากระบบ', style: AppTextStyles.bodyMedium.copyWith(color: AppColors.coral600)),
+                child: Text(
+                  'ออกจากระบบ',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.coral600,
+                  ),
+                ),
               ),
             ),
           ],
@@ -957,11 +1165,20 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildHeaderCard(String displayName, String email, String? avatarPath) {
-    final avatarUrl = (avatarPath != null && avatarPath.isNotEmpty) ? '${getApiBase()}$avatarPath' : null;
+  Widget _buildHeaderCard(
+    String displayName,
+    String email,
+    String? avatarPath,
+  ) {
+    final avatarUrl = (avatarPath != null && avatarPath.isNotEmpty)
+        ? '${getApiBase()}$avatarPath'
+        : null;
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Row(
         children: [
           GestureDetector(
@@ -971,7 +1188,11 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 Opacity(
                   opacity: _uploadingAvatar ? 0.5 : 1.0,
-                  child: AppAvatarInitials(name: displayName, size: 56, imageUrl: avatarUrl),
+                  child: AppAvatarInitials(
+                    name: displayName,
+                    size: 56,
+                    imageUrl: avatarUrl,
+                  ),
                 ),
                 if (_uploadingAvatar)
                   const Positioned.fill(
@@ -979,7 +1200,10 @@ class _ProfilePageState extends State<ProfilePage> {
                       child: SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.teal500),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.teal500,
+                        ),
                       ),
                     ),
                   ),
@@ -992,9 +1216,15 @@ class _ProfilePageState extends State<ProfilePage> {
                     decoration: const BoxDecoration(
                       color: AppColors.teal500,
                       shape: BoxShape.circle,
-                      border: Border.fromBorderSide(BorderSide(color: Colors.white, width: 2)),
+                      border: Border.fromBorderSide(
+                        BorderSide(color: Colors.white, width: 2),
+                      ),
                     ),
-                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                    child: const Icon(
+                      Icons.camera_alt,
+                      size: 12,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
@@ -1005,9 +1235,19 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(displayName, style: AppTextStyles.headingMedium.copyWith(color: AppColors.gray900)),
+                Text(
+                  displayName,
+                  style: AppTextStyles.headingMedium.copyWith(
+                    color: AppColors.gray900,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(email, style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600)),
+                Text(
+                  email,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.gray600,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1018,24 +1258,43 @@ class _ProfilePageState extends State<ProfilePage> {
             },
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: AppColors.teal500),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
-            child: Text(_editing ? 'ยกเลิก' : 'แก้ไข', style: const TextStyle(color: AppColors.teal500)),
+            child: Text(
+              _editing ? 'ยกเลิก' : 'แก้ไข',
+              style: const TextStyle(color: AppColors.teal500),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatsRow(int? age, double? bmi, String? bmiLabel, double? weight, double? height) {
+  Widget _buildStatsRow(
+    int? age,
+    double? bmi,
+    String? bmiLabel,
+    double? weight,
+    double? height,
+  ) {
     Widget stat(String label, String value, {Color? valueColor}) => Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(value, style: AppTextStyles.headingSmall.copyWith(color: valueColor ?? AppColors.gray900)),
+            Text(
+              value,
+              style: AppTextStyles.headingSmall.copyWith(
+                color: valueColor ?? AppColors.gray900,
+              ),
+            ),
             const SizedBox(height: 2),
             Text(label, style: AppTextStyles.caption),
           ],
@@ -1053,7 +1312,10 @@ class _ProfilePageState extends State<ProfilePage> {
     Widget bmiStat() => Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1070,7 +1332,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Text(
                     bmiLabel,
                     maxLines: 1,
-                    style: AppTextStyles.caption.copyWith(color: _bmiColor(bmi)),
+                    style: AppTextStyles.caption.copyWith(
+                      color: _bmiColor(bmi),
+                    ),
                   ),
                 ),
               ),
@@ -1090,23 +1354,39 @@ class _ProfilePageState extends State<ProfilePage> {
           const SizedBox(width: 8),
           bmiStat(),
           const SizedBox(width: 8),
-          stat('น้ำหนัก', weight == null ? '-' : '${weight.toStringAsFixed(0)} กก.'),
+          stat(
+            'น้ำหนัก',
+            weight == null ? '-' : '${weight.toStringAsFixed(0)} กก.',
+          ),
           const SizedBox(width: 8),
-          stat('ส่วนสูง', height == null ? '-' : '${height.toStringAsFixed(0)} ซม.'),
+          stat(
+            'ส่วนสูง',
+            height == null ? '-' : '${height.toStringAsFixed(0)} ซม.',
+          ),
         ],
       ),
     );
   }
 
-  InputDecoration _decoration(String label, {String? suffixText}) => InputDecoration(
-    labelText: label,
-    suffixText: suffixText,
-    filled: true,
-    fillColor: AppColors.gray50,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.gray100)),
-    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.gray100)),
-    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.teal500, width: 2)),
-  );
+  InputDecoration _decoration(String label, {String? suffixText}) =>
+      InputDecoration(
+        labelText: label,
+        suffixText: suffixText,
+        filled: true,
+        fillColor: AppColors.gray50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.gray100),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.gray100),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.teal500, width: 2),
+        ),
+      );
 
   // ปุ่ม spin ขึ้น/ลง ข้างช่องน้ำหนัก/ส่วนสูง — เพิ่ม/ลดค่าใน controller ตรงๆ
   // ทีละ [step] แทนต้องพิมพ์เอง (ผู้ใช้รายงานจริง: อยากได้ปุ่มแบบ input
@@ -1133,7 +1413,10 @@ class _ProfilePageState extends State<ProfilePage> {
       _spinnerTimer?.cancel();
       bump(delta);
       _spinnerTimer = Timer(const Duration(milliseconds: 400), () {
-        _spinnerTimer = Timer.periodic(const Duration(milliseconds: 80), (_) => bump(delta));
+        _spinnerTimer = Timer.periodic(
+          const Duration(milliseconds: 80),
+          (_) => bump(delta),
+        );
       });
     }
 
@@ -1166,17 +1449,35 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildEditForm() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('แก้ไขข้อมูลส่วนตัว', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+          Text(
+            'แก้ไขข้อมูลส่วนตัว',
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.gray900,
+            ),
+          ),
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: TextField(controller: _nameCtrl, decoration: _decoration('ชื่อ'))),
+              Expanded(
+                child: TextField(
+                  controller: _nameCtrl,
+                  decoration: _decoration('ชื่อ'),
+                ),
+              ),
               const SizedBox(width: 12),
-              Expanded(child: TextField(controller: _surnameCtrl, decoration: _decoration('นามสกุล'))),
+              Expanded(
+                child: TextField(
+                  controller: _surnameCtrl,
+                  decoration: _decoration('นามสกุล'),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -1200,15 +1501,26 @@ class _ProfilePageState extends State<ProfilePage> {
               onPressed: _savingProfile ? null : _saveProfile,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.teal500,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               child: _savingProfile
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
                     )
-                  : const Text('บันทึกข้อมูล', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  : const Text(
+                      'บันทึกข้อมูล',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1233,9 +1545,15 @@ class _ProfilePageState extends State<ProfilePage> {
   // (invalidate() ในตัว build ของกล่องนั้น) ไม่งั้นแก้แค่จุดเดียวจุดที่สองยัง
   // มีบั๊กเดิมอยู่
   void _invalidateDietCalculated() {
-    final lockedUntilStr = context.read<AuthService>().user?['health_goal_locked_until']?.toString();
-    final lockedUntil = (lockedUntilStr != null && lockedUntilStr.isNotEmpty) ? DateTime.tryParse(lockedUntilStr) : null;
-    final isLocked = lockedUntil != null && DateTime.now().isBefore(lockedUntil);
+    final lockedUntilStr = context
+        .read<AuthService>()
+        .user?['health_goal_locked_until']
+        ?.toString();
+    final lockedUntil = (lockedUntilStr != null && lockedUntilStr.isNotEmpty)
+        ? DateTime.tryParse(lockedUntilStr)
+        : null;
+    final isLocked =
+        lockedUntil != null && DateTime.now().isBefore(lockedUntil);
     for (final g in _goalOptions) {
       if (isLocked && g == _pendingGoal) continue;
       _dietCalculated[g] = false;
@@ -1259,8 +1577,12 @@ class _ProfilePageState extends State<ProfilePage> {
     // (ที่ปัดเศษ 2 ตำแหน่ง ใช้ทั่วแอปตรงกับ backend ที่โชว์แค่ 1 ตำแหน่งอยู่
     // แล้ว) เพราะ hpc5 โชว์ BMI 2 ตำแหน่งแบบตัดเศษทิ้ง (68/170cm ได้ 23.52
     // ไม่ใช่ 23.53 ที่ปัดเศษจะได้) จุดอื่นในแอปยังคงพฤติกรรมเดิมไม่กระทบ
-    final rawBmi = (weight != null && height != null && height > 0) ? weight / ((height / 100) * (height / 100)) : null;
-    final bmi = revealed && rawBmi != null ? (rawBmi * 100).floorToDouble() / 100 : null;
+    final rawBmi = (weight != null && height != null && height > 0)
+        ? weight / ((height / 100) * (height / 100))
+        : null;
+    final bmi = revealed && rawBmi != null
+        ? (rawBmi * 100).floorToDouble() / 100
+        : null;
     final status = bmi_calc.bmiStatus(bmi);
 
     String? advisory;
@@ -1270,7 +1592,8 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'ปกติ':
         advisory = 'น้ำหนักอยู่ในเกณฑ์ปกติ ควรรักษาระดับนี้ไว้';
       case 'ท้วม/น้ำหนักเกิน':
-        advisory = 'หากคุณมีกรรมพันธุ์เป็นโรคเบาหวานหรือไขมันในเลือดสูง ควรพยายามลดน้ำหนักให้ดัชนีมวลกายต่ำกว่า 23';
+        advisory =
+            'หากคุณมีกรรมพันธุ์เป็นโรคเบาหวานหรือไขมันในเลือดสูง ควรพยายามลดน้ำหนักให้ดัชนีมวลกายต่ำกว่า 23';
       case 'อ้วน':
         advisory = 'ควรลดน้ำหนักและปรึกษาแพทย์เพื่อดูแลสุขภาพอย่างเหมาะสม';
     }
@@ -1278,11 +1601,19 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('คำนวณดัชนีมวลกาย (BMI)', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+          Text(
+            'คำนวณดัชนีมวลกาย (BMI)',
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.gray900,
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1290,22 +1621,38 @@ class _ProfilePageState extends State<ProfilePage> {
               Expanded(
                 child: TextField(
                   controller: _weightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: _decoration('น้ำหนัก', suffixText: 'กก.'),
                   onChanged: (_) => _invalidateWeightHeight(),
                 ),
               ),
-              _numberSpinner(_weightCtrl, step: 0.1, min: 1, max: 1000, decimals: 1),
+              _numberSpinner(
+                _weightCtrl,
+                step: 0.1,
+                min: 1,
+                max: 1000,
+                decimals: 1,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: TextField(
                   controller: _heightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: _decoration('ส่วนสูง', suffixText: 'ซม.'),
                   onChanged: (_) => _invalidateWeightHeight(),
                 ),
               ),
-              _numberSpinner(_heightCtrl, step: 0.1, min: 1, max: 300, decimals: 1),
+              _numberSpinner(
+                _heightCtrl,
+                step: 0.1,
+                min: 1,
+                max: 300,
+                decimals: 1,
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -1318,14 +1665,26 @@ class _ProfilePageState extends State<ProfilePage> {
                     // ต้องกรอกน้ำหนัก+ส่วนสูงให้ครบ (เป็นตัวเลขจริง มากกว่า 0)
                     // ก่อนถึงจะกดคำนวณได้ — ผู้ใช้รายงานจริง: ช่องว่างอยู่แต่
                     // ปุ่มกดได้ ทั้งที่ยังไม่มีอะไรให้คำนวณเลย
-                    onPressed: (weight != null && weight > 0 && height != null && height > 0)
+                    onPressed:
+                        (weight != null &&
+                            weight > 0 &&
+                            height != null &&
+                            height > 0)
                         ? () => setState(() => _bmiCalculated = true)
                         : null,
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.teal500),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('คำนวณ BMI', style: TextStyle(color: AppColors.teal700, fontWeight: FontWeight.w600)),
+                    child: const Text(
+                      'คำนวณ BMI',
+                      style: TextStyle(
+                        color: AppColors.teal700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1334,20 +1693,36 @@ class _ProfilePageState extends State<ProfilePage> {
                 child: SizedBox(
                   height: 44,
                   child: ElevatedButton(
-                    onPressed: (_savingProfile || weight == null || weight <= 0 || height == null || height <= 0)
+                    onPressed:
+                        (_savingProfile ||
+                            weight == null ||
+                            weight <= 0 ||
+                            height == null ||
+                            height <= 0)
                         ? null
                         : () => _saveProfile(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.teal500,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     child: _savingProfile
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
                           )
-                        : const Text('บันทึก', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                        : const Text(
+                            'บันทึก',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -1357,28 +1732,56 @@ class _ProfilePageState extends State<ProfilePage> {
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: AppColors.gray50, borderRadius: BorderRadius.circular(10)),
+              decoration: BoxDecoration(
+                color: AppColors.gray50,
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Text('ค่า BMI = ', style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray900)),
+                      Text(
+                        'ค่า BMI = ',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.gray900,
+                        ),
+                      ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: _bmiColor(bmi), borderRadius: BorderRadius.circular(6)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _bmiColor(bmi),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
                         child: Text(
                           bmi.toStringAsFixed(2),
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(status ?? '', style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray900)),
+                      Text(
+                        status ?? '',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.gray900,
+                        ),
+                      ),
                     ],
                   ),
                   if (advisory != null) ...[
                     const SizedBox(height: 6),
-                    Text(advisory, style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600)),
+                    Text(
+                      advisory,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.gray600,
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -1404,24 +1807,50 @@ class _ProfilePageState extends State<ProfilePage> {
     final weight = double.tryParse(_weightCtrl.text.trim());
     final height = double.tryParse(_heightCtrl.text.trim());
     final age = _ageFromDob(_dob);
-    final bmr = bmi_calc.calcBmr(weight: weight, height: height, age: age, gender: _gender);
-    final tdee = bmi_calc.calcTdee(weight: weight, height: height, age: age, gender: _gender, activity: _activity);
+    final bmr = bmi_calc.calcBmr(
+      weight: weight,
+      height: height,
+      age: age,
+      gender: _gender,
+    );
+    final tdee = bmi_calc.calcTdee(
+      weight: weight,
+      height: height,
+      age: age,
+      gender: _gender,
+      activity: _activity,
+    );
     // กล่องสีๆ ล้อ "ผลการคำนวน" ของ hpc5.go.th (ผู้ใช้ขอให้ตัวเลขมีกล่องสี
     // เหมือนเว็บ แทนตัวหนังสือธรรมดา) — โทนสีใช้จากชุดสีที่มีอยู่แล้วในระบบ
     // (AppColors) ไม่ผสมสีใหม่ขึ้นมาเอง
     Widget pill(String text, Color bg) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-      child: Text(text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
     );
 
     Widget tile(String label, double? value, Color color) => Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(color: AppColors.gray50, borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+          color: AppColors.gray50,
+          borderRadius: BorderRadius.circular(10),
+        ),
         child: Column(
           children: [
-            value == null ? const Text('-') : pill('${value.round()} kcal', color),
+            value == null
+                ? const Text('-')
+                : pill('${value.round()} kcal', color),
             const SizedBox(height: 4),
             Text(label, style: AppTextStyles.caption),
           ],
@@ -1434,7 +1863,10 @@ class _ProfilePageState extends State<ProfilePage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text('คุณต้องบริโภค ', style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600)),
+          Text(
+            'คุณต้องบริโภค ',
+            style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600),
+          ),
           pill('${value.round()}', color),
           const SizedBox(width: 6),
           Expanded(
@@ -1457,26 +1889,39 @@ class _ProfilePageState extends State<ProfilePage> {
     final revealed = _bmrCalculated && bmr != null && tdee != null;
     // ต้องกรอกครบทุกช่อง (เพศ/วันเกิด/น้ำหนัก/ส่วนสูง/ระดับกิจกรรม) ก่อนถึงจะ
     // กดคำนวณได้ — ผู้ใช้รายงานจริง: ช่องว่างอยู่แต่ปุ่มกดได้
-    final hasAllFields = _gender != null &&
+    final hasAllFields =
+        _gender != null &&
         _dob != null &&
-        weight != null && weight > 0 &&
-        height != null && height > 0 &&
+        weight != null &&
+        weight > 0 &&
+        height != null &&
+        height > 0 &&
         _activity != null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('คำนวณ BMR / TDEE', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+          Text(
+            'คำนวณ BMR / TDEE',
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.gray900,
+            ),
+          ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _gender,
             isExpanded: true,
             decoration: _decoration('เพศ'),
-            items: _genderOptions.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+            items: _genderOptions
+                .map((g) => DropdownMenuItem(value: g, child: Text(g)))
+                .toList(),
             onChanged: (v) {
               setState(() => _gender = v);
               invalidate();
@@ -1495,7 +1940,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 _dob == null
                     ? '-'
                     : '${_dob!.day.toString().padLeft(2, '0')}/${_dob!.month.toString().padLeft(2, '0')}/${_dob!.year}'
-                        ' (อายุ ${_ageFromDob(_dob) ?? '-'} ปี)',
+                          ' (อายุ ${_ageFromDob(_dob) ?? '-'} ปี)',
               ),
             ),
           ),
@@ -1506,22 +1951,38 @@ class _ProfilePageState extends State<ProfilePage> {
               Expanded(
                 child: TextField(
                   controller: _weightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: _decoration('น้ำหนัก', suffixText: 'กก.'),
                   onChanged: (_) => _invalidateWeightHeight(),
                 ),
               ),
-              _numberSpinner(_weightCtrl, step: 0.1, min: 1, max: 1000, decimals: 1),
+              _numberSpinner(
+                _weightCtrl,
+                step: 0.1,
+                min: 1,
+                max: 1000,
+                decimals: 1,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: TextField(
                   controller: _heightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: _decoration('ส่วนสูง', suffixText: 'ซม.'),
                   onChanged: (_) => _invalidateWeightHeight(),
                 ),
               ),
-              _numberSpinner(_heightCtrl, step: 0.1, min: 1, max: 300, decimals: 1),
+              _numberSpinner(
+                _heightCtrl,
+                step: 0.1,
+                min: 1,
+                max: 300,
+                decimals: 1,
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1530,7 +1991,12 @@ class _ProfilePageState extends State<ProfilePage> {
             isExpanded: true,
             decoration: _decoration('ระดับกิจกรรม'),
             items: _activityOptions
-                .map((a) => DropdownMenuItem(value: a, child: Text(a, overflow: TextOverflow.ellipsis)))
+                .map(
+                  (a) => DropdownMenuItem(
+                    value: a,
+                    child: Text(a, overflow: TextOverflow.ellipsis),
+                  ),
+                )
                 .toList(),
             onChanged: (v) {
               setState(() => _activity = v);
@@ -1544,12 +2010,22 @@ class _ProfilePageState extends State<ProfilePage> {
                 child: SizedBox(
                   height: 44,
                   child: OutlinedButton(
-                    onPressed: hasAllFields ? () => setState(() => _bmrCalculated = true) : null,
+                    onPressed: hasAllFields
+                        ? () => setState(() => _bmrCalculated = true)
+                        : null,
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.teal500),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('คำนวณ BMR', style: TextStyle(color: AppColors.teal700, fontWeight: FontWeight.w600)),
+                    child: const Text(
+                      'คำนวณ BMR',
+                      style: TextStyle(
+                        color: AppColors.teal700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1558,18 +2034,31 @@ class _ProfilePageState extends State<ProfilePage> {
                 child: SizedBox(
                   height: 44,
                   child: ElevatedButton(
-                    onPressed: (_savingProfile || !hasAllFields) ? null : () => _saveProfile(),
+                    onPressed: (_savingProfile || !hasAllFields)
+                        ? null
+                        : () => _saveProfile(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.teal500,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     child: _savingProfile
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
                           )
-                        : const Text('บันทึก', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                        : const Text(
+                            'บันทึก',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -1585,14 +2074,22 @@ class _ProfilePageState extends State<ProfilePage> {
               ],
             ),
             const SizedBox(height: 10),
-            // แถวนี้ล้อ hpc5.go.th ตรงๆ ไม่กันขั้นต่ำ (ต่างจากค่า "แนะนำต่อวัน"
-            // ในกล่องวางแผนพลังงานที่ต้องกันไว้เพราะเป็นค่าที่ผู้ใช้เอาไปใช้จริง
-            // — ผู้ใช้รายงานจริง: ต้องการให้ตรงกับเว็บอ้างอิงเป๊ะ ไม่ใช่กันไว้)
-            // สีกล่องล้อ hpc5 เป๊ะ: ส้ม/แดง สำหรับลด, เขียว/ฟ้า สำหรับเพิ่ม
-            weeklyRow('ลด 0.5 กิโลกรัม/สัปดาห์', tdee - 500, AppColors.amber500),
+            weeklyRow(
+              'ลด 0.5 กิโลกรัม/สัปดาห์',
+              tdee - 500,
+              AppColors.amber500,
+            ),
             weeklyRow('ลด 1 กิโลกรัม/สัปดาห์', tdee - 1000, AppColors.coral400),
-            weeklyRow('เพิ่ม 0.5 กิโลกรัม/สัปดาห์', tdee + 500, AppColors.teal500),
-            weeklyRow('เพิ่ม 1 กิโลกรัม/สัปดาห์', tdee + 1000, AppColors.blue400),
+            weeklyRow(
+              'เพิ่ม 0.5 กิโลกรัม/สัปดาห์',
+              tdee + 500,
+              AppColors.teal500,
+            ),
+            weeklyRow(
+              'เพิ่ม 1 กิโลกรัม/สัปดาห์',
+              tdee + 1000,
+              AppColors.blue400,
+            ),
           ],
         ],
       ),
@@ -1605,17 +2102,255 @@ class _ProfilePageState extends State<ProfilePage> {
     if (tdee == null || weight == null) return null;
     final targetWeight = double.tryParse(_targetWeightCtrls[goal]!.text.trim());
     final days = int.tryParse(_dietDaysCtrls[goal]!.text.trim());
-    if (targetWeight == null || targetWeight <= 0 || days == null || days <= 0) return null;
+    if (targetWeight == null || targetWeight <= 0 || days == null || days <= 0)
+      return null;
     final perDay = ((targetWeight - weight) * 7700) / days;
-    final isFemale = _gender?.trim() == 'หญิง';
-    final floor = isFemale ? 1200.0 : 1500.0;
     final raw = tdee + perDay;
-    return raw < floor ? floor : raw;
+    return raw;
   }
 
-  Widget _buildGoalSection(double? bmr, double? tdee, double? weight, DateTime? lockedUntil, double? savedCaloriesGoal) {
-    final isLocked = lockedUntil != null;
+  double _dietAdjustmentFor(String goal, double? tdee, {int? requested}) {
+    final adjustment = (requested ?? _dietCalorieAdjustments[goal] ?? 500)
+        .toDouble();
+    if (goal != 'ลดน้ำหนัก' || tdee == null) return adjustment;
+    final floor = _gender == 'หญิง' ? 1200.0 : 1500.0;
+    return (tdee - floor).clamp(0, adjustment).toDouble();
+  }
 
+  double? _goalCaloriesForRate(String goal, double? rawTdee, int rate) {
+    if (rawTdee == null) return null;
+    return goal == 'ลดน้ำหนัก' ? rawTdee - rate : rawTdee + rate;
+  }
+
+  String? _goalRateSafetyError(
+    String goal,
+    int rate,
+    double? tdee,
+    double? rawTdee,
+  ) {
+    final calories = _goalCaloriesForRate(goal, rawTdee, rate);
+    if (calories == null || tdee == null) {
+      return 'กรุณากรอกข้อมูลให้ครบก่อนเลือกอัตราแคลอรี';
+    }
+    if (goal == 'ลดน้ำหนัก') {
+      final floor = _gender == 'หญิง' ? 1200 : 1500;
+      if (calories < floor) {
+        return 'ตัวเลือกนี้ให้พลังงาน ${calories.round()} kcal/วัน ต่ำกว่าขั้นต่ำที่ปลอดภัย ($floor kcal/วัน)';
+      }
+      final adjustment = tdee - calories;
+      if (adjustment <= 0) {
+        return 'ค่าแคลอรีนี้ไม่ต่ำกว่า TDEE ที่ใช้กับเป้าหมายสุขภาพ';
+      }
+      if (adjustment > 1000) {
+        return 'ตัวเลือกนี้ปรับพลังงานเกิน 1000 kcal/วัน จึงไม่ปลอดภัย';
+      }
+    } else {
+      final adjustment = calories - tdee;
+      if (adjustment <= 0) {
+        return 'ค่าแคลอรีนี้ไม่สูงกว่า TDEE ที่ใช้กับเป้าหมายสุขภาพ';
+      }
+      if (adjustment > 1000) {
+        return 'ตัวเลือกนี้ปรับพลังงานเกิน 1000 kcal/วัน จึงไม่ปลอดภัย';
+      }
+    }
+    return null;
+  }
+
+  void _selectDietCalorieAdjustment(
+    String goal,
+    int adjustment,
+    double? tdee,
+    double? rawTdee,
+  ) {
+    final safetyError = _goalRateSafetyError(goal, adjustment, tdee, rawTdee);
+    if (safetyError != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(safetyError)));
+      return;
+    }
+
+    final weight = double.tryParse(_weightCtrl.text.trim());
+    final targetWeight = double.tryParse(_targetWeightCtrls[goal]!.text.trim());
+    setState(() {
+      _dietCalorieAdjustments[goal] = adjustment;
+      _dietCalculated[goal] = false;
+      if (weight != null && targetWeight != null) {
+        final days = _recommendedDietDays(
+          goal,
+          weight,
+          targetWeight,
+          tdee,
+          rawTdee,
+        );
+        if (days == null) {
+          _dietDaysCtrls[goal]!.clear();
+        } else {
+          _dietDaysCtrls[goal]!.text = days.toString();
+        }
+      }
+    });
+  }
+
+  int? _recommendedDietDays(
+    String goal,
+    double weight,
+    double? targetWeight,
+    double? tdee,
+    double? rawTdee,
+  ) {
+    if (goal == 'รักษาน้ำหนัก') {
+      return 30;
+    }
+    if (targetWeight == null || targetWeight <= 0) {
+      return null;
+    }
+    if (goal == 'ลดน้ำหนัก' && targetWeight >= weight) {
+      return null;
+    }
+    if (goal == 'เพิ่มน้ำหนัก' && targetWeight <= weight) {
+      return null;
+    }
+    final selectedRate = _dietCalorieAdjustments[goal];
+    if (selectedRate != null) {
+      if (_goalRateSafetyError(goal, selectedRate, tdee, rawTdee) != null) {
+        return null;
+      }
+      final selectedCalories = _goalCaloriesForRate(
+        goal,
+        rawTdee,
+        selectedRate,
+      )!;
+      final dailyAdjustment = goal == 'ลดน้ำหนัก'
+          ? tdee! - selectedCalories
+          : selectedCalories - tdee!;
+      final days = (((targetWeight - weight).abs() * 7700) / dailyAdjustment)
+          .ceil();
+      return days > 3650 ? null : days.clamp(1, 3650).toInt();
+    }
+    final dailyAdjustment = _dietAdjustmentFor(goal, tdee);
+    if (dailyAdjustment <= 0) return null;
+    final days = (((targetWeight - weight).abs() * 7700) / dailyAdjustment)
+        .ceil();
+    return days > 3650 ? null : days.clamp(1, 3650).toInt();
+  }
+
+  String? _dietDaysRecommendationText(
+    String goal,
+    double weight,
+    double? targetWeight,
+    double? tdee,
+    double? rawTdee,
+  ) {
+    if (goal == 'รักษาน้ำหนัก') {
+      return tdee == null
+          ? 'แนะนำ 30 วันสำหรับติดตามการรักษาน้ำหนัก'
+          : 'แนะนำ 30 วันสำหรับติดตามการรักษาน้ำหนัก โดยใช้ประมาณ ${tdee.round()} kcal/วัน';
+    }
+    if (targetWeight == null || targetWeight <= 0 || tdee == null) {
+      return null;
+    }
+    if ((goal == 'ลดน้ำหนัก' && targetWeight >= weight) ||
+        (goal == 'เพิ่มน้ำหนัก' && targetWeight <= weight)) {
+      return null;
+    }
+    final difference = (targetWeight - weight).abs();
+    final selectedRate = _dietCalorieAdjustments[goal];
+    if (selectedRate != null) {
+      final safetyError = _goalRateSafetyError(
+        goal,
+        selectedRate,
+        tdee,
+        rawTdee,
+      );
+      if (safetyError != null) return safetyError;
+      final selectedCalories = _goalCaloriesForRate(
+        goal,
+        rawTdee,
+        selectedRate,
+      )!.round();
+      final selectedDays = _recommendedDietDays(
+        goal,
+        weight,
+        targetWeight,
+        tdee,
+        rawTdee,
+      );
+      if (selectedDays == null) {
+        return 'เป้าหมายนี้ต้องใช้เวลามากกว่า 3650 วัน กรุณาปรับน้ำหนักเป้าหมาย';
+      }
+      return 'เลือก $selectedCalories kcal/วัน (~${selectedRate == 500 ? '0.5' : '1'} กก./สัปดาห์); แนะนำ $selectedDays วัน';
+    }
+    final defaultRate = _dietCalorieAdjustments[goal] ?? 500;
+    final selectedAdjustment = _dietAdjustmentFor(goal, tdee);
+    if (selectedAdjustment <= 0) {
+      return 'TDEE ต่ำกว่าขั้นต่ำที่ปลอดภัย จึงยังแนะนำแผนลดน้ำหนักไม่ได้';
+    }
+    final selectedDays = (difference * 7700 / selectedAdjustment).ceil();
+    if (selectedDays > 3650) {
+      return 'เป้าหมายนี้ต้องใช้เวลามากกว่า 3650 วัน กรุณาปรับน้ำหนักเป้าหมาย';
+    }
+    final direction = goal == 'ลดน้ำหนัก' ? -1 : 1;
+    final selectedDailyAdjustment = difference * 7700 / selectedDays;
+    final selectedCalories = (tdee + direction * selectedDailyAdjustment)
+        .round();
+    final selectedWeeklyRate = difference * 7 / selectedDays;
+    final selectedLabel =
+        '~${selectedWeeklyRate.toStringAsFixed(2)} กก./สัปดาห์';
+    final alternateRate = defaultRate == 500 ? 1000 : 500;
+    final alternateAdjustment = _dietAdjustmentFor(
+      goal,
+      tdee,
+      requested: alternateRate,
+    );
+    final String alternateLabel;
+    if (alternateAdjustment <= 0) {
+      alternateLabel =
+          'ทางเลือก ${alternateRate == 500 ? '0.5' : '1'} กก./สัปดาห์ '
+          'ต่ำกว่าขั้นต่ำที่ปลอดภัย';
+    } else {
+      final alternateDays = (difference * 7700 / alternateAdjustment).ceil();
+      if (alternateDays > 3650) {
+        alternateLabel =
+            'ทางเลือก ${alternateRate == 500 ? '0.5' : '1'} กก./สัปดาห์เกินระยะเวลาสูงสุด 3650 วัน';
+      } else {
+        final alternateDailyAdjustment = difference * 7700 / alternateDays;
+        final alternateCalories = (tdee + direction * alternateDailyAdjustment)
+            .round();
+        final alternateWeeklyRate = difference * 7 / alternateDays;
+        alternateLabel =
+            'ทางเลือก $alternateDays วัน (~${alternateWeeklyRate.toStringAsFixed(2)} กก./สัปดาห์, $alternateCalories kcal/วัน)';
+      }
+    }
+    return 'แนะนำ $selectedDays วัน ($selectedLabel, $selectedCalories kcal/วัน); '
+        '$alternateLabel';
+  }
+
+  void _selectHealthGoal(String goal, double? profileWeight) {
+    final weight = double.tryParse(_weightCtrl.text.trim()) ?? profileWeight;
+    setState(() {
+      _pendingGoal = goal;
+      if (goal == 'รักษาน้ำหนัก') {
+        final targetCtrl = _targetWeightCtrls[goal]!;
+        final daysCtrl = _dietDaysCtrls[goal]!;
+        if (targetCtrl.text.trim().isEmpty && weight != null) {
+          targetCtrl.text = weight.toStringAsFixed(1);
+        }
+        if (daysCtrl.text.trim().isEmpty) {
+          daysCtrl.text = '30';
+        }
+      }
+    });
+  }
+
+  Widget _buildGoalSection(
+    double? bmr,
+    double? tdee,
+    double? rawTdee,
+    double? weight,
+    DateTime? lockedUntil,
+    double? savedCaloriesGoal,
+  ) {
     Widget goalCard(String goal) {
       final selected = _pendingGoal == goal;
       // ต้องกรอกเป้าหมายน้ำหนัก+จำนวนวัน แล้วกด "คำนวณ" ก่อนถึงจะเห็นตัวเลข
@@ -1631,35 +2366,45 @@ class _ProfilePageState extends State<ProfilePage> {
       // ใน build() เป้าหมายอื่นที่ยังไม่ล็อก (พรีวิวก่อนกดบันทึก) ยังคำนวณสดปกติ
       final preview = !revealed
           ? null
-          : (isLocked && selected && savedCaloriesGoal != null)
-              ? savedCaloriesGoal
-              : _dietRecommendedFor(goal, tdee, weight);
+          : _dietRecommendedFor(goal, tdee, weight);
       return Expanded(
         child: GestureDetector(
-          onTap: isLocked ? null : () => setState(() => _pendingGoal = goal),
+          onTap: () => _selectHealthGoal(goal, weight),
           child: Opacity(
-            opacity: isLocked && !selected ? 0.5 : 1.0,
+            opacity: 1.0,
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 4),
               padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
               decoration: BoxDecoration(
                 color: selected ? AppColors.teal50 : Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: selected ? AppColors.teal500 : AppColors.gray100, width: selected ? 2 : 1),
+                border: Border.all(
+                  color: selected ? AppColors.teal500 : AppColors.gray100,
+                  width: selected ? 2 : 1,
+                ),
               ),
               child: Column(
                 children: [
-                  if (selected) const Icon(Icons.check_circle, color: AppColors.teal500, size: 18),
+                  if (selected)
+                    const Icon(
+                      Icons.check_circle,
+                      color: AppColors.teal500,
+                      size: 18,
+                    ),
                   if (selected) const SizedBox(height: 4),
                   Text(
                     goal,
                     textAlign: TextAlign.center,
-                    style: AppTextStyles.labelBold.copyWith(color: AppColors.gray900),
+                    style: AppTextStyles.labelBold.copyWith(
+                      color: AppColors.gray900,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     preview == null ? '-' : '${preview.round()} kcal',
-                    style: AppTextStyles.caption.copyWith(color: AppColors.gray600),
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.gray600,
+                    ),
                   ),
                 ],
               ),
@@ -1671,60 +2416,59 @@ class _ProfilePageState extends State<ProfilePage> {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('เป้าหมายสุขภาพ', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+          Text(
+            'เป้าหมายสุขภาพ',
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.gray900,
+            ),
+          ),
           const SizedBox(height: 12),
           Row(children: _goalOptions.map(goalCard).toList()),
-          _buildDietPlanBox(tdee, weight, isLocked, savedCaloriesGoal),
+          // แผนน้ำหนักและจำนวนวันแก้ไขได้เสมอ แม้เป้าหมายหลักยังอยู่ในรอบล็อก
+          _buildDietPlanBox(tdee, rawTdee, weight, false, savedCaloriesGoal),
           const SizedBox(height: 16),
-          // ล็อกเป้าหมายไว้ตามจำนวนวันที่กรอกในกล่องวางแผนพลังงาน (ไม่ใช่ 7 วัน
-          // ตายตัวอีกต่อไป) — ล็อกปุ่ม/การ์ดไว้พร้อมบอกวันที่เปลี่ยนได้อีกครั้ง
-          // แทนการปล่อยให้กดแล้วโดน backend ปฏิเสธเงียบๆ
-          if (isLocked)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(color: AppColors.amber50, borderRadius: BorderRadius.circular(10)),
-              child: Row(
-                children: [
-                  const Icon(Icons.lock_clock, size: 18, color: AppColors.amber500),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'เปลี่ยนเป้าหมายได้อีกครั้งในวันที่ '
-                      '${lockedUntil.day.toString().padLeft(2, '0')}/${lockedUntil.month.toString().padLeft(2, '0')}/${lockedUntil.year}',
-                      style: AppTextStyles.bodySmall.copyWith(color: AppColors.amber500),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           SizedBox(
             height: 44,
             child: ElevatedButton(
-              onPressed: (isLocked ||
-                      _savingGoal ||
+              onPressed:
+                  (_savingGoal ||
                       _pendingGoal == null ||
                       weight == null ||
+                      tdee == null ||
                       !(_dietCalculated[_pendingGoal] ?? false) ||
                       _dietPlanValidationError(_pendingGoal!, weight) != null)
                   ? null
-                  : _saveGoal,
+                  : () => _saveGoal(tdee),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.teal500,
                 disabledBackgroundColor: AppColors.gray100,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               child: _savingGoal
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
                     )
-                  : const Text('บันทึกเป้าหมาย', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  : const Text(
+                      'บันทึกเป้าหมาย',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1750,7 +2494,12 @@ class _ProfilePageState extends State<ProfilePage> {
   String? _dietPlanValidationError(String goal, double weight) {
     final targetWeight = double.tryParse(_targetWeightCtrls[goal]!.text.trim());
     final days = int.tryParse(_dietDaysCtrls[goal]!.text.trim());
-    if (targetWeight == null || targetWeight <= 0 || days == null || days <= 0) {
+    if (targetWeight == null ||
+        targetWeight <= 0 ||
+        targetWeight > 1000 ||
+        days == null ||
+        days <= 0 ||
+        days > 3650) {
       return 'กรอกน้ำหนักเป้าหมายและจำนวนวันให้ถูกต้อง';
     }
     if (goal == 'ลดน้ำหนัก' && targetWeight >= weight) {
@@ -1766,15 +2515,168 @@ class _ProfilePageState extends State<ProfilePage> {
     return null;
   }
 
-  Widget _buildDietPlanBox(double? tdee, double? weight, bool isLocked, double? savedCaloriesGoal) {
+  void _showNegativeCaloriesWarning(
+    String goal,
+    double currentWeight,
+    double targetWeight,
+    int days,
+    double kcal,
+  ) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.coral600),
+            SizedBox(width: 8),
+            Text('ค่าพลังงานที่แนะนำอันตรายเกินไป'),
+          ],
+        ),
+        content: Text(
+          'เป้าหมาย $goal\n'
+          'น้ำหนักปัจจุบัน: ${currentWeight.toStringAsFixed(1)} กก.\n'
+          'เป้าหมายน้ำหนักที่ต้องการ: ${targetWeight.toStringAsFixed(1)} กก.\n'
+          'จำนวนวัน: $days วัน\n\n'
+          'ค่าพลังงานที่คำนวณได้คือ ${kcal.round()} kcal\n\n'
+          'ซึ่งติดลบ/ต่ำกว่าค่าความปลอดภัยมากและอาจเป็นอันตรายต่อสุขภาพ\n\n'
+          'กรุณาปรับเป้าหมายน้ำหนักหรือจำนวนวันใหม่ก่อนบันทึก',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('ปรับค่าใหม่'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUnsafeWeightGainWarning(
+    String goal,
+    double currentWeight,
+    double targetWeight,
+    int days,
+    double dailyGainKcal,
+  ) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.coral600),
+            SizedBox(width: 8),
+            Text('ค่าพลังงานที่แนะนำอันตรายเกินไป'),
+          ],
+        ),
+        content: Text(
+          'เป้าหมาย $goal\n'
+          'น้ำหนักปัจจุบัน: ${currentWeight.toStringAsFixed(1)} กก.\n'
+          'เป้าหมายน้ำหนักที่ต้องการ: ${targetWeight.toStringAsFixed(1)} กก.\n'
+          'จำนวนวัน: $days วัน\n\n'
+          'ค่าพลังงานที่คำนวณได้คือ ${dailyGainKcal.round()} kcal/วัน\n\n'
+          'ซึ่งสูงกว่าค่าความปลอดภัยที่แนะนำ (ไม่ควรเกิน 1000 kcal/วัน)\n\n'
+          'กรุณาปรับเป้าหมายน้ำหนักหรือจำนวนวันใหม่ก่อนบันทึก',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('ปรับค่าใหม่'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUnsafeMaintenanceWarning(
+    String goal,
+    double currentWeight,
+    double targetWeight,
+    int days,
+    double dailyDeltaKcal,
+  ) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.coral600),
+            SizedBox(width: 8),
+            Text('ค่าพลังงานที่แนะนำอันตรายเกินไป'),
+          ],
+        ),
+        content: Text(
+          'เป้าหมาย $goal\n'
+          'น้ำหนักปัจจุบัน: ${currentWeight.toStringAsFixed(1)} กก.\n'
+          'เป้าหมายน้ำหนักที่ต้องการ: ${targetWeight.toStringAsFixed(1)} กก.\n'
+          'จำนวนวัน: $days วัน\n\n'
+          'ค่าพลังงานที่คำนวณได้คือ ${dailyDeltaKcal.round()} kcal/วัน\n\n'
+          'ซึ่งสูง/ต่ำกว่าค่าความปลอดภัยมากและอาจเป็นอันตรายต่อสุขภาพ\n\n'
+          'กรุณาปรับเป้าหมายน้ำหนักหรือจำนวนวันใหม่ก่อนบันทึก',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('ปรับค่าใหม่'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? _dietSafetyError(String goal, double weight, double? tdee) {
+    final targetWeight = double.tryParse(_targetWeightCtrls[goal]!.text.trim());
+    final days = int.tryParse(_dietDaysCtrls[goal]!.text.trim());
+    if (targetWeight == null || targetWeight <= 0 || days == null || days <= 0)
+      return null;
+
+    final perDay = ((targetWeight - weight) * 7700) / days;
+    if (perDay.abs() > 1000) {
+      return 'แผนนี้ต้องปรับพลังงานเกิน 1000 kcal/วัน กรุณาเพิ่มจำนวนวันหรือปรับน้ำหนักเป้าหมาย';
+    }
+
+    if (goal == 'ลดน้ำหนัก' && tdee != null) {
+      final floor = _gender == 'หญิง' ? 1200 : 1500;
+      if (tdee + perDay < floor) {
+        return 'พลังงานที่แนะนำต่ำกว่าขั้นต่ำที่ปลอดภัย ($floor kcal/วัน) กรุณาเพิ่มจำนวนวันหรือปรับน้ำหนักเป้าหมาย';
+      }
+    }
+
+    if (goal == 'รักษาน้ำหนัก') {
+      return null;
+    }
+
+    return null;
+  }
+
+  Widget _buildDietPlanBox(
+    double? tdee,
+    double? rawTdee,
+    double? weight,
+    bool isLocked,
+    double? savedCaloriesGoal,
+  ) {
     final goal = _pendingGoal;
-    if (goal == null || tdee == null || weight == null) return const SizedBox.shrink();
+    if (goal == null || tdee == null || weight == null)
+      return const SizedBox.shrink();
     final targetCtrl = _targetWeightCtrls[goal]!;
     final daysCtrl = _dietDaysCtrls[goal]!;
     final calculated = _dietCalculated[goal] ?? false;
 
     final targetWeight = double.tryParse(targetCtrl.text.trim());
     final days = int.tryParse(daysCtrl.text.trim());
+    final recommendationHint = _dietDaysRecommendationText(
+      goal,
+      weight,
+      targetWeight,
+      tdee,
+      rawTdee,
+    );
 
     double? perDay; // ลบ = ต้องลด, บวก = ต้องเพิ่ม, 0 = ไม่ต้องปรับ
     double? recommended;
@@ -1809,12 +2711,68 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: AppColors.gray50, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: AppColors.gray50,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('วางแผนพลังงาน', style: AppTextStyles.labelBold.copyWith(color: AppColors.gray900)),
+          Text(
+            'วางแผนพลังงาน',
+            style: AppTextStyles.labelBold.copyWith(color: AppColors.gray900),
+          ),
           const SizedBox(height: 8),
+          if (goal == 'ลดน้ำหนัก' || goal == 'เพิ่มน้ำหนัก') ...[
+            Text(
+              'เลือกอัตราแคลอรีจาก BMR / TDEE',
+              style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [500, 1000].map((rate) {
+                final calories = _goalCaloriesForRate(goal, rawTdee, rate);
+                final safetyError = _goalRateSafetyError(
+                  goal,
+                  rate,
+                  tdee,
+                  rawTdee,
+                );
+                final rateLabel = rate == 500 ? '0.5' : '1';
+                return ChoiceChip(
+                  label: Text(
+                    calories == null
+                        ? '... kcal/วัน (~$rateLabel กก./สัปดาห์)'
+                        : '${calories.round()} kcal/วัน (~$rateLabel กก./สัปดาห์)'
+                              '${safetyError == null ? '' : ' • ไม่ปลอดภัย'}',
+                  ),
+                  selected: _dietCalorieAdjustments[goal] == rate,
+                  onSelected: isLocked || safetyError != null
+                      ? null
+                      : (_) => _selectDietCalorieAdjustment(
+                          goal,
+                          rate,
+                          tdee,
+                          rawTdee,
+                        ),
+                );
+              }).toList(),
+            ),
+            if ([500, 1000].any(
+              (rate) => _goalRateSafetyError(goal, rate, tdee, rawTdee) != null,
+            ))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'ตัวเลือกที่ต่ำกว่าขั้นต่ำปลอดภัยหรือไม่สอดคล้องกับ TDEE จะเลือกใช้ไม่ได้',
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.coral600,
+                  ),
+                ),
+              ),
+          ],
           // ล็อกช่องกรอก+ปุ่ม "คำนวณ" ตอนเป้าหมายถูกล็อกอยู่ (isLocked) —
           // เดิมล็อกแค่การ์ดเป้าหมาย 3 ใบด้านบนกับปุ่ม "บันทึกเป้าหมาย" แต่
           // กล่องนี้ยังแก้ไข/กดคำนวณได้อยู่เฉยๆ ทั้งที่กดบันทึกจริงไม่ได้แล้ว
@@ -1823,15 +2781,39 @@ class _ProfilePageState extends State<ProfilePage> {
             controller: targetCtrl,
             enabled: !isLocked,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: _decoration('เป้าหมายน้ำหนักที่ต้องการ', suffixText: 'kg.'),
-            onChanged: (_) => setState(() => _dietCalculated[goal] = false),
+            decoration: _decoration(
+              'เป้าหมายน้ำหนักที่ต้องการ',
+              suffixText: 'kg.',
+            ),
+            onChanged: (value) {
+              final target = double.tryParse(value.trim());
+              final suggestedDays = _recommendedDietDays(
+                goal,
+                weight,
+                target,
+                tdee,
+                rawTdee,
+              );
+              setState(() {
+                if (goal != 'รักษาน้ำหนัก') {
+                  if (suggestedDays == null) {
+                    daysCtrl.clear();
+                  } else {
+                    daysCtrl.text = suggestedDays.toString();
+                  }
+                }
+                _dietCalculated[goal] = false;
+              });
+            },
           ),
           const SizedBox(height: 10),
           TextField(
             controller: daysCtrl,
             enabled: !isLocked,
             keyboardType: TextInputType.number,
-            decoration: _decoration('จำนวนวัน'),
+            decoration: _decoration(
+              'จำนวนวัน',
+            ).copyWith(helperText: recommendationHint, helperMaxLines: 3),
             onChanged: (_) => setState(() => _dietCalculated[goal] = false),
           ),
           const SizedBox(height: 10),
@@ -1843,23 +2825,98 @@ class _ProfilePageState extends State<ProfilePage> {
                   : () {
                       final err = _dietPlanValidationError(goal, weight);
                       if (err != null) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(err)));
                         return;
                       }
+
+                      final recommendation = _dietRecommendedFor(
+                        goal,
+                        tdee,
+                        weight,
+                      );
+                      final calorieFloor = _gender == 'หญิง' ? 1200 : 1500;
+                      if (recommendation != null &&
+                          (recommendation <= 0 ||
+                              (goal == 'ลดน้ำหนัก' &&
+                                  recommendation < calorieFloor))) {
+                        _showNegativeCaloriesWarning(
+                          goal,
+                          weight,
+                          targetWeight!,
+                          days!,
+                          recommendation,
+                        );
+                        return;
+                      }
+
+                      final safetyErr = _dietSafetyError(goal, weight, tdee);
+                      if (safetyErr != null) {
+                        final targetWeight = double.tryParse(
+                          targetCtrl.text.trim(),
+                        );
+                        final days = int.tryParse(daysCtrl.text.trim());
+                        if (targetWeight != null && days != null && days > 0) {
+                          final dailyDelta =
+                              ((targetWeight - weight) * 7700) / days;
+                          if (goal == 'รักษาน้ำหนัก') {
+                            _showUnsafeMaintenanceWarning(
+                              goal,
+                              weight,
+                              targetWeight,
+                              days,
+                              dailyDelta,
+                            );
+                          } else if (goal == 'เพิ่มน้ำหนัก' &&
+                              targetWeight > weight) {
+                            _showUnsafeWeightGainWarning(
+                              goal,
+                              weight,
+                              targetWeight,
+                              days,
+                              dailyDelta,
+                            );
+                          } else {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(safetyErr)));
+                          }
+                        } else {
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text(safetyErr)));
+                        }
+                        return;
+                      }
+
                       setState(() => _dietCalculated[goal] = true);
                     },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.teal500,
                 disabledBackgroundColor: AppColors.gray100,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
-              child: const Text('คำนวณ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              child: const Text(
+                'คำนวณ',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
           if (calculated) ...[
             const SizedBox(height: 12),
             if (error != null)
-              Text(error, style: AppTextStyles.bodySmall.copyWith(color: AppColors.coral600))
+              Text(
+                error,
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.coral600,
+                ),
+              )
             else ...[
               _dietResultTile(adjustLabel, adjustValue),
               const SizedBox(height: 8),
@@ -1881,7 +2938,10 @@ class _ProfilePageState extends State<ProfilePage> {
     ),
     child: Column(
       children: [
-        Text(label, style: AppTextStyles.caption.copyWith(color: AppColors.gray600)),
+        Text(
+          label,
+          style: AppTextStyles.caption.copyWith(color: AppColors.gray600),
+        ),
         const SizedBox(height: 4),
         Text(
           value == null ? '-' : '${value.round()} kcal',
@@ -1915,11 +2975,14 @@ class _ProfilePageState extends State<ProfilePage> {
     // แรกสุดแทนแล้วโชว์ label "X วันก่อน" ทั้งที่จริงเทียบจากแค่วันเริ่มบันทึก
     // (บั๊กที่ผู้ใช้รายงานจริง: ดูเหมือนน้ำหนักเปลี่ยนเร็วผิดปกติ) ซ่อนแถวนี้
     // ไปเลยแทนจนกว่าจะมีข้อมูลย้อนหลังจริงครบตามที่ label บอก
-    if (_weightLogs.first.loggedAt.isAfter(latest.loggedAt.subtract(Duration(days: daysAgo)))) {
+    if (_weightLogs.first.loggedAt.isAfter(
+      latest.loggedAt.subtract(Duration(days: daysAgo)),
+    )) {
       return const SizedBox.shrink();
     }
     final ref = _referenceEntry(daysAgo);
-    if (ref == null || ref.loggedAt == latest.loggedAt) return const SizedBox.shrink();
+    if (ref == null || ref.loggedAt == latest.loggedAt)
+      return const SizedBox.shrink();
     final delta = latest.weight - ref.weight;
     final color = _weightDeltaColor(delta, healthGoal);
     final sign = delta > 0 ? '+' : '';
@@ -1927,7 +2990,10 @@ class _ProfilePageState extends State<ProfilePage> {
       padding: const EdgeInsets.only(top: 4),
       child: Text(
         '$sign${delta.toStringAsFixed(1)} kg $label',
-        style: AppTextStyles.bodySmall.copyWith(color: color, fontWeight: FontWeight.w600),
+        style: AppTextStyles.bodySmall.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -1935,15 +3001,26 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildWeightHistorySection(String? healthGoal) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('น้ำหนักย้อนหลัง', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
-              TextButton(onPressed: _openLogWeightSheet, child: const Text('+ บันทึกวันนี้')),
+              Text(
+                'น้ำหนักย้อนหลัง',
+                style: AppTextStyles.headingSmall.copyWith(
+                  color: AppColors.gray900,
+                ),
+              ),
+              TextButton(
+                onPressed: _openLogWeightSheet,
+                child: const Text('+ บันทึกวันนี้'),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1959,7 +3036,9 @@ class _ProfilePageState extends State<ProfilePage> {
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
                 'ยังไม่มีข้อมูลน้ำหนัก — กด "+ บันทึกวันนี้" เพื่อเริ่มติดตาม',
-                style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600),
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.gray600,
+                ),
               ),
             )
           else if (_weightLogs.length == 1) ...[
@@ -1981,9 +3060,16 @@ class _ProfilePageState extends State<ProfilePage> {
                   children: [
                     Text(
                       _weightLogs.first.weight.toStringAsFixed(1),
-                      style: AppTextStyles.headingSmall.copyWith(color: AppColors.teal700),
+                      style: AppTextStyles.headingSmall.copyWith(
+                        color: AppColors.teal700,
+                      ),
                     ),
-                    Text('กก.', style: AppTextStyles.caption.copyWith(color: AppColors.teal700)),
+                    Text(
+                      'กก.',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.teal700,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -2004,35 +3090,47 @@ class _ProfilePageState extends State<ProfilePage> {
           ] else ...[
             AppLineChart(
               points: _weightLogs
-                  .map((e) => AppLineChartPoint(date: e.loggedAt, value: e.weight))
+                  .map(
+                    (e) => AppLineChartPoint(date: e.loggedAt, value: e.weight),
+                  )
                   .toList(),
             ),
             const SizedBox(height: 8),
             _weightDeltaRow('จาก 7 วันก่อน', 7, healthGoal),
             _weightDeltaRow('จาก 30 วันก่อน', 30, healthGoal),
             const SizedBox(height: 12),
-            Text('บันทึกล่าสุด', style: AppTextStyles.labelBold.copyWith(color: AppColors.gray900)),
+            Text(
+              'บันทึกล่าสุด',
+              style: AppTextStyles.labelBold.copyWith(color: AppColors.gray900),
+            ),
             const SizedBox(height: 4),
             // เอาแค่ 5 รายการล่าสุด (ใหม่สุดอยู่บนสุด) กันลิสต์ยาวเกินถ้า
             // บันทึกครบทุกวันในช่วง 30 วันที่ดึงมา
-            ..._weightLogs.reversed.take(5).map(
-              (e) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${e.loggedAt.day.toString().padLeft(2, '0')}/${e.loggedAt.month.toString().padLeft(2, '0')}/${e.loggedAt.year}',
-                      style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600),
+            ..._weightLogs.reversed
+                .take(5)
+                .map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${e.loggedAt.day.toString().padLeft(2, '0')}/${e.loggedAt.month.toString().padLeft(2, '0')}/${e.loggedAt.year}',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.gray600,
+                          ),
+                        ),
+                        Text(
+                          '${e.weight.toStringAsFixed(1)} กก.',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.gray900,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      '${e.weight.toStringAsFixed(1)} กก.',
-                      style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray900, fontWeight: FontWeight.w600),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
           ],
         ],
       ),
@@ -2042,23 +3140,36 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildExportSection() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ส่งออกประวัติ', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+                Text(
+                  'ส่งออกประวัติ',
+                  style: AppTextStyles.headingSmall.copyWith(
+                    color: AppColors.gray900,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'ดาวน์โหลดประวัติการกินเป็นไฟล์ CSV หรือ PDF',
-                  style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600),
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.gray600,
+                  ),
                 ),
               ],
             ),
           ),
-          TextButton(onPressed: _openExportSheet, child: const Text('ดาวน์โหลด')),
+          TextButton(
+            onPressed: _openExportSheet,
+            child: const Text('ดาวน์โหลด'),
+          ),
         ],
       ),
     );
@@ -2071,7 +3182,10 @@ class _ProfilePageState extends State<ProfilePage> {
     bool submitting = false;
     String? error;
 
-    Future<void> pickDate(void Function(DateTime) onPicked, DateTime? initial) async {
+    Future<void> pickDate(
+      void Function(DateTime) onPicked,
+      DateTime? initial,
+    ) async {
       final picked = await showDatePicker(
         context: context,
         initialDate: initial ?? DateTime.now(),
@@ -2084,7 +3198,9 @@ class _ProfilePageState extends State<ProfilePage> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
@@ -2097,10 +3213,20 @@ class _ProfilePageState extends State<ProfilePage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('ดาวน์โหลดประวัติ', style: AppTextStyles.headingMedium.copyWith(color: AppColors.gray900)),
+              Text(
+                'ดาวน์โหลดประวัติ',
+                style: AppTextStyles.headingMedium.copyWith(
+                  color: AppColors.gray900,
+                ),
+              ),
               const SizedBox(height: 16),
               if (error != null) ...[
-                Text(error!, style: AppTextStyles.bodySmall.copyWith(color: AppColors.coral600)),
+                Text(
+                  error!,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.coral600,
+                  ),
+                ),
                 const SizedBox(height: 8),
               ],
               Row(
@@ -2123,15 +3249,23 @@ class _ProfilePageState extends State<ProfilePage> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => pickDate((d) => setSheetState(() => from = d), from),
-                      child: Text(from == null ? 'จากวันที่ (ทั้งหมด)' : 'จาก ${_ymd(from!)}'),
+                      onPressed: () =>
+                          pickDate((d) => setSheetState(() => from = d), from),
+                      child: Text(
+                        from == null
+                            ? 'จากวันที่ (ทั้งหมด)'
+                            : 'จาก ${_ymd(from!)}',
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => pickDate((d) => setSheetState(() => to = d), to),
-                      child: Text(to == null ? 'ถึงวันที่ (ทั้งหมด)' : 'ถึง ${_ymd(to!)}'),
+                      onPressed: () =>
+                          pickDate((d) => setSheetState(() => to = d), to),
+                      child: Text(
+                        to == null ? 'ถึงวันที่ (ทั้งหมด)' : 'ถึง ${_ymd(to!)}',
+                      ),
                     ),
                   ),
                 ],
@@ -2147,7 +3281,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             submitting = true;
                             error = null;
                           });
-                          final result = await _exportService.exportHistory(format: format, from: from, to: to);
+                          final result = await _exportService.exportHistory(
+                            format: format,
+                            from: from,
+                            to: to,
+                          );
                           await result.when(
                             ok: (file) async {
                               try {
@@ -2167,15 +3305,26 @@ class _ProfilePageState extends State<ProfilePage> {
                         },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.teal500,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: submitting
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
-                      : const Text('ดาวน์โหลด', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      : const Text(
+                          'ดาวน์โหลด',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -2188,34 +3337,60 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildReportsSection() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('รายงานปัญหา', style: AppTextStyles.headingSmall.copyWith(color: AppColors.gray900)),
+              Text(
+                'รายงานปัญหา',
+                style: AppTextStyles.headingSmall.copyWith(
+                  color: AppColors.gray900,
+                ),
+              ),
               Row(
                 children: [
-                  TextButton(onPressed: _openTicketHistory, child: const Text('ดูประวัติ')),
-                  TextButton(onPressed: _openNewReportSheet, child: const Text('+ รายงานปัญหาใหม่')),
+                  TextButton(
+                    onPressed: _openTicketHistory,
+                    child: const Text('ดูประวัติ'),
+                  ),
+                  TextButton(
+                    onPressed: _openNewReportSheet,
+                    child: const Text('+ รายงานปัญหาใหม่'),
+                  ),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 8),
           if (_loadingReports)
-            Column(children: List.generate(2, (_) => const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: AppSkeletonLoader(variant: AppSkeletonVariant.listItem),
-            )))
+            Column(
+              children: List.generate(
+                2,
+                (_) => const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: AppSkeletonLoader(
+                    variant: AppSkeletonVariant.listItem,
+                  ),
+                ),
+              ),
+            )
           else if (_reportsError != null)
             AppErrorBanner(message: _reportsError!, onRetry: _loadReports)
           else if (_reports.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text('ไม่มีเรื่องที่กำลังดำเนินการ', style: AppTextStyles.bodySmall.copyWith(color: AppColors.gray600)),
+              child: Text(
+                'ไม่มีเรื่องที่กำลังดำเนินการ',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.gray600,
+                ),
+              ),
             )
           else
             ..._reports.map(
@@ -2229,7 +3404,11 @@ class _ProfilePageState extends State<ProfilePage> {
                 type: MaterialType.transparency,
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(r.title.isEmpty ? '-' : r.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    r.title.isEmpty ? '-' : r.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   subtitle: Text(
                     r.createdAt == null
                         ? '-'
@@ -2237,12 +3416,20 @@ class _ProfilePageState extends State<ProfilePage> {
                     style: AppTextStyles.caption,
                   ),
                   trailing: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.teal50,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(r.status.labelTh, style: AppTextStyles.caption.copyWith(color: AppColors.teal700)),
+                    child: Text(
+                      r.status.labelTh,
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.teal700,
+                      ),
+                    ),
                   ),
                   onTap: () => _openTicketChat(r),
                 ),

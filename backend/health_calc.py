@@ -124,9 +124,8 @@ def calc_calories_goal_custom(tdee, weight, target_weight, days, gender=None) ->
     if tdee is None or weight is None or target_weight is None or days is None or days < 1:
         return None
     per_day = ((target_weight - weight) * 7700) / days
-    floor = 1200 if gender == 'หญิง' else 1500
     raw = tdee + per_day
-    return int(round(raw if raw > floor else floor))
+    return int(round(raw))
 
 
 def calc_calories_from_macros(carbs_g, protein_g, fat_g) -> float:

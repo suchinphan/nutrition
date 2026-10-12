@@ -4,7 +4,12 @@ import csv
 import io
 from datetime import timedelta
 
-from models import db, Report, ReportMessage, User, ProfileAuditLog, Submission, FoodCategory, FoodType, FoodItem, ServingSize, Allergen, MealLog, MealLogItem, AdminActionLog, get_thailand_time
+from models import (
+    db, Report, ReportMessage, User, ProfileAuditLog, Submission,
+    FoodCategory, FoodType, FoodItem, ServingSize, Allergen, MealLog,
+    MealLogItem, AdminActionLog, UserFavoriteFood, food_allergens,
+    get_thailand_time,
+)
 from sqlalchemy import text, func
 from sqlalchemy.orm import selectinload
 from flask import session
@@ -812,9 +817,22 @@ def admin_update_food_item(item_id):
 def admin_delete_food_item(item_id):
     if not _check_admin_secret(request):
         return error_response('forbidden', 403)
+
     item = FoodItem.query.get(item_id)
     if not item:
         return error_response('not_found', 404)
+
+    # Remove dependent rows before deleting the food item so MySQL foreign-key
+    # constraints are satisfied. This is intentionally scoped to the food-item
+    # delete flow and does not modify unrelated admin logic.
+    MealLogItem.query.filter_by(food_item_id=item_id).delete(synchronize_session=False)
+    UserFavoriteFood.query.filter_by(food_item_id=item_id).delete(synchronize_session=False)
+    ServingSize.query.filter_by(food_item_id=item_id).delete(synchronize_session=False)
+    db.session.execute(
+        food_allergens.delete().where(food_allergens.c.food_item_id == item_id)
+    )
+    FoodItem.query.filter_by(swap_food_id=item_id).update({FoodItem.swap_food_id: None})
+
     _log_admin_action('delete', 'food_item', item_id, detail=item.name)
     db.session.delete(item)
     db.session.commit()
@@ -870,18 +888,20 @@ def _parse_import_row(row):
 @admin_bp.route('/food-items/import', methods=['POST'])
 def admin_import_food_items():
     """นำเข้าเมนูจาก CSV — คอลัมน์: name, name_th, category_name, calories,
-    protein_g, carbs_g, fat_g, fiber_g, sugar_g, image_url
-
-    category_name ที่ไม่เจอใน food_categories จะถูก**สร้างใหม่อัตโนมัติ**
-    (type='food' เป็นค่าเริ่มต้น) แทนที่จะ error ทั้งแถว — เหตุผล: จุดประสงค์
-    ของ endpoint นี้คือเติมเมนูจำนวนมากให้เร็วก่อนนำเสนอ (ตอนนี้มีแค่ 3 แถว
-    จริงใน DB) การบังคับให้แอดมินไปสร้างหมวดหมู่ก่อนทีละชื่อผ่าน UI แยกต่างหาก
-    จะขัดจังหวะ workflow bulk-import โดยไม่จำเป็น ส่วนแอดมินยังแก้ type ของ
-    หมวดหมู่ที่สร้างอัตโนมัติได้ทีหลังผ่าน PUT /admin/food-categories/<id>
-    อยู่แล้วถ้า 'food' ไม่ใช่ type ที่ถูกต้อง
+    protein_g, carbs_g, fat_g, fiber_g, sugar_g, image_url โดย category_name
+    ต้องตรงกับหมวดหมู่ย่อยที่มีอยู่ในหัวข้อที่ส่งมากับ request
     """
     if not _check_admin_secret(request):
         return error_response('forbidden', 403)
+
+    category_type = (request.args.get('type') or '').strip()
+    if not category_type:
+        return error_response('ต้องระบุประเภทหัวข้อเมนู (type)', 400)
+    if (
+        category_type not in PROTECTED_FOOD_TYPES
+        and not FoodType.query.filter_by(name=category_type).first()
+    ):
+        return error_response('ไม่พบหัวข้อเมนูที่ระบุ', 400)
 
     file = request.files.get('file') or request.files.get('csv')
     if not file:
@@ -900,18 +920,25 @@ def admin_import_food_items():
     if reader.fieldnames is None:
         return error_response('ไฟล์ CSV ว่างเปล่าหรืออ่านหัวตารางไม่ได้', 400)
 
-    existing_categories = {c.name: c for c in FoodCategory.query.all()}
-    category_cache = dict(existing_categories)
+    existing_categories = {
+        c.name: c for c in FoodCategory.query.filter_by(type=category_type).all()
+    }
 
     results = []
     to_create = []  # (row_result, parsed) — เฉพาะแถวที่ผ่าน validation แล้ว
 
     for i, row in enumerate(reader, start=2):  # แถว 1 คือ header
         parsed, error, warning = _parse_import_row(row)
+        if not error and parsed['category_name'] not in existing_categories:
+            error = (
+                f'ไม่พบหมวดหมู่ "{parsed["category_name"]}" '
+                f'ในหัวข้อ "{category_type}"'
+            )
         if error:
             results.append({
                 'row': i,
                 'name': (row.get('name') or '').strip() or None,
+                'category_name': (row.get('category_name') or '').strip() or None,
                 'status': 'error',
                 'error': error,
             })
@@ -928,46 +955,19 @@ def admin_import_food_items():
         to_create.append((row_result, parsed))
 
     if dry_run:
-        new_category_names = sorted({
-            p['category_name'] for _, p in to_create if p['category_name'] not in existing_categories
-        })
         return jsonify({
             'dry_run': True,
             'total_rows': len(results),
             'would_create_count': len(to_create),
             'error_count': sum(1 for r in results if r['status'] == 'error'),
-            'new_categories': new_category_names,
+            'new_categories': [],
             'results': results,
         }), 200
-
-    # เขียนจริง — แยก 2 รอบ: (1) สร้างหมวดหมู่ที่ขาดให้ครบก่อน แต่ละหมวดหมู่
-    # commit เป็น savepoint อิสระของตัวเอง (2) ค่อยสร้างเมนูทีละแถว แต่ละแถว
-    # เป็น savepoint อิสระเช่นกัน — แยกสองรอบเพราะถ้ารวมการสร้างหมวดหมู่ +
-    # เมนูไว้ savepoint เดียวกัน แล้วเมนูแถวหนึ่งพังทีหลัง จะ rollback
-    # หมวดหมู่ที่เพิ่งสร้างไปด้วย ทั้งที่แถวอื่นที่ผ่านไปแล้วอาจอ้างหมวดหมู่
-    # เดียวกันนั้นอยู่ (cache ใน Python จะเพี้ยนไม่ตรงกับ DB จริง)
-    needed_category_names = {p['category_name'] for _, p in to_create}
-    category_errors = {}
-    for cat_name in needed_category_names:
-        if cat_name in category_cache:
-            continue
-        try:
-            with db.session.begin_nested():
-                cat = FoodCategory(name=cat_name, type='food')
-                db.session.add(cat)
-                db.session.flush()
-            category_cache[cat_name] = cat
-        except Exception as exc:
-            category_errors[cat_name] = str(exc)
 
     created_count = 0
     for row_result, parsed in to_create:
         cat_name = parsed['category_name']
-        if cat_name in category_errors:
-            row_result['status'] = 'error'
-            row_result['error'] = f'สร้างหมวดหมู่ "{cat_name}" ไม่สำเร็จ: {category_errors[cat_name]}'
-            continue
-        cat = category_cache[cat_name]
+        cat = existing_categories[cat_name]
         try:
             with db.session.begin_nested():
                 item = FoodItem(
@@ -1000,7 +1000,7 @@ def admin_import_food_items():
         'total_rows': len(results),
         'created_count': created_count,
         'error_count': sum(1 for r in results if r['status'] == 'error'),
-        'new_categories': sorted(set(category_cache) - set(existing_categories)),
+        'new_categories': [],
         'results': results,
     }), 200
 

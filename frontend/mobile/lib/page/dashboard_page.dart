@@ -6,6 +6,7 @@ import '../core/theme/app_text_styles.dart';
 import '../core/widgets/widgets.dart';
 import '../models/dashboard_data.dart';
 import '../models/food_item.dart';
+import '../models/health_goal_cycle.dart';
 import '../models/meal_log.dart';
 import '../models/weekly_summary.dart';
 import '../services/app_config.dart';
@@ -240,6 +241,28 @@ class _DashboardPageState extends State<DashboardPage> {
     if (cycle == null || !mounted) return;
     final percent = (cycle.successRatio * 100).round();
     final days = cycle.periodEnd.difference(cycle.periodStart).inDays + 1;
+    final overDailyQuota = !cycle.isSuccess && cycle.dailyQuotaExcessPercent > 0;
+    final overDailyQuotaPercent = cycle.dailyQuotaExcessPercent.round();
+    final weightSupported = cycle.weightDelta != null &&
+        ((cycle.healthGoal == 'ลดน้ำหนัก' && cycle.weightDelta! < 0) ||
+            (cycle.healthGoal == 'เพิ่มน้ำหนัก' && cycle.weightDelta! > 0) ||
+            (cycle.healthGoal == 'รักษาน้ำหนัก' && cycle.weightDelta!.abs() <= 1.0));
+    final weightSummary = cycle.weightStart != null && cycle.weightEnd != null
+        ? _weightResultText(cycle)
+        : 'ยังไม่มีข้อมูลน้ำหนักเพียงพอสำหรับยืนยันผล';
+    final mealSummary = 'บันทึกมื้ออาหารครบ ${cycle.mealsLogged} จาก ${cycle.mealsAvailable} มื้อที่มีให้เลือก ($percent%)';
+    final isOverQuotaButWeightOnTarget = cycle.dailyQuotaExcessPercent > 0 && weightSupported;
+    final overQuotaLabel = cycle.healthGoal == 'ลดน้ำหนัก'
+        ? 'กินเกินแต่ลดน้ำหนัก'
+        : cycle.healthGoal == 'เพิ่มน้ำหนัก'
+            ? 'กินเกินแต่เพิ่มน้ำหนัก'
+            : 'กินเกินแต่ยังอยู่ในช่วงรักษาน้ำหนัก';
+    final failureReason = cycle.successRatio < 0.6
+      ? 'เป้าหมายไม่สำเร็จ (ต่ำกว่า 60%)'
+      : 'เป้าหมายไม่สำเร็จ';
+    final statusText = cycle.isSuccess
+      ? '$mealSummary\nเป้าหมายสำเร็จ\n${isOverQuotaButWeightOnTarget ? '$overQuotaLabel: $weightSummary' : weightSummary}'
+      : '$mealSummary\n$failureReason\n${overDailyQuota ? 'กินเกินโควตารายวัน $overDailyQuotaPercent%\n' : ''}$weightSummary';
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -249,11 +272,13 @@ class _DashboardPageState extends State<DashboardPage> {
       builder: (ctx) => PopScope(
         canPop: false,
         child: AlertDialog(
-          title: Text(cycle.isSuccess ? 'สำเร็จ!' : 'ยังไม่สำเร็จ'),
+          title: Text(
+            cycle.isSuccess
+                ? 'สำเร็จ!'
+                : 'เป้าหมายไม่สำเร็จ',
+          ),
           content: Text(
-            'ครบ $days วันของเป้าหมาย${cycle.healthGoal}แล้ว\n'
-            'บันทึกมื้ออาหารไป ${cycle.mealsLogged} จาก ${cycle.mealsAvailable} มื้อที่มีให้เลือก ($percent%)'
-            '${cycle.mealsOverQuota > 0 ? '\nกินเกินโควตาต่อมื้อไป ${cycle.mealsOverQuota} มื้อ' : ''}',
+            'ครบ $days วันของเป้าหมาย${cycle.healthGoal}แล้ว\n$statusText',
           ),
           actions: [
             TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('รับทราบ')),
@@ -262,6 +287,32 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
     );
     await _goalCycleService.acknowledge(cycle.id);
+  }
+
+  String _weightResultText(HealthGoalCycle cycle) {
+    final start = cycle.weightStart!.toStringAsFixed(1);
+    final end = cycle.weightEnd!.toStringAsFixed(1);
+    final delta = (cycle.weightEnd ?? 0.0) - (cycle.weightStart ?? 0.0);
+    final deltaText = delta.abs().toStringAsFixed(1);
+
+    if (cycle.healthGoal == 'ลดน้ำหนัก') {
+      if (delta < 0) {
+        return 'น้ำหนักเป้าหมายลดลงจาก $start กก. เป็น $end กก. (ลดลง $deltaText กก.)';
+      }
+      return 'น้ำหนักเป้าหมาย $start กก. → น้ำหนักล่าสุด $end กก. (เพิ่มขึ้น $deltaText กก.)';
+    }
+    if (cycle.healthGoal == 'เพิ่มน้ำหนัก') {
+      if (delta > 0) {
+        return 'น้ำหนักเป้าหมายเพิ่มขึ้นจาก $start กก. เป็น $end กก. (เพิ่มขึ้น $deltaText กก.)';
+      }
+      return 'น้ำหนักเป้าหมาย $start กก. → น้ำหนักล่าสุด $end กก. (ลดลง $deltaText กก.)';
+    }
+    if (cycle.healthGoal == 'รักษาน้ำหนัก' && delta.abs() <= 1.0) {
+      final changeText = delta > 0 ? 'เพิ่มขึ้น' : 'ลดลง';
+      return 'น้ำหนักเป้าหมายรักษาอยู่ที่ $start กก. → $end กก. ($changeText $deltaText กก.)';
+    }
+    final changeText = delta > 0 ? 'เพิ่มขึ้น' : 'ลดลง';
+    return 'น้ำหนักเป้าหมาย $start กก. → น้ำหนักล่าสุด $end กก. (ไม่สอดคล้องกับเป้าหมายที่เลือก: $changeText $deltaText กก.)';
   }
 
   Future<_DashboardViewData> _load() async {
@@ -1041,6 +1092,7 @@ class _AiRecommendSectionState extends State<_AiRecommendSection> {
   // สลับหมวดถี่ๆ ยิง _load() ซ้อนกันได้เหมือนกับ FoodBrowserPage — ต้องทิ้ง
   // response ของหมวดที่ไม่ได้เลือกอยู่แล้วถ้ามันตอบกลับมาทีหลัง
   int _loadGeneration = 0;
+  final Map<String, List<AiRecommendation>> _categorySeed = {};
 
   // ตะกร้าเมนูที่ AI แนะนำ — เลือกข้ามหมวดได้ก่อนกด "บันทึก" รวดเดียว
   // (ดูคอมเมนต์บนคลาส) ทุกเมนูในตะกร้าลงมื้อเดียวกัน (_cartLog)
@@ -1079,7 +1131,7 @@ class _AiRecommendSectionState extends State<_AiRecommendSection> {
     );
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool randomize = false}) async {
     final myGeneration = ++_loadGeneration;
     setState(() {
       _loading = true;
@@ -1089,17 +1141,23 @@ class _AiRecommendSectionState extends State<_AiRecommendSection> {
     });
     final result = await widget.aiRecommendService.fetchRecommendations(
       category: _category,
-      limit: 3,
+      limit: 5,
       date: widget.selectedDate,
+      randomize: randomize,
     );
     if (!mounted || myGeneration != _loadGeneration) return;
     result.when(
-      ok: (r) => setState(() {
-        _items = r.items;
-        _blocked = r.blocked;
-        _blockedReason = r.blockedReason;
-        _loading = false;
-      }),
+      ok: (r) {
+        final fetched = List<AiRecommendation>.from(r.items);
+        _categorySeed[_category] = fetched;
+
+        setState(() {
+          _items = fetched;
+          _blocked = r.blocked;
+          _blockedReason = r.blockedReason;
+          _loading = false;
+        });
+      },
       err: (e) => setState(() {
         _loading = false;
         _error = e.toUserMessage();
@@ -1107,9 +1165,19 @@ class _AiRecommendSectionState extends State<_AiRecommendSection> {
     );
   }
 
+  void _randomizeCurrentMenu() {
+    final seeded = _categorySeed[_category] ?? _items;
+    if (seeded.isEmpty) return;
+    _load(randomize: true);
+  }
+
   void _selectCategory(String value) {
     if (_category == value) return;
     setState(() => _category = value);
+    if (_categorySeed.containsKey(_category)) {
+      setState(() => _items = List<AiRecommendation>.from(_categorySeed[_category]!));
+      return;
+    }
     _load();
   }
 
@@ -1227,14 +1295,28 @@ class _AiRecommendSectionState extends State<_AiRecommendSection> {
               // ผู้ใช้รายงานจริง: อยากเลือกบันทึกเมนูที่ AI แนะนำย้อนหลังได้
               // ด้วย ไม่ใช่ล็อกไว้ที่วันนี้เสมอ — แตะเพื่อเปิด date picker
               // มาตรฐาน (ดู _pickAiRecommendDate ใน DashboardPage)
-              TextButton.icon(
-                onPressed: widget.onPickDate,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  visualDensity: VisualDensity.compact,
-                ),
-                icon: const Icon(Icons.calendar_today, size: 14),
-                label: Text(_dateLabel, style: AppTextStyles.caption),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: _loading ? null : _randomizeCurrentMenu,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.refresh_rounded, size: 14),
+                    label: const Text('เปลี่ยนเมนู', style: AppTextStyles.caption),
+                  ),
+                  TextButton.icon(
+                    onPressed: widget.onPickDate,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.calendar_today, size: 14),
+                    label: Text(_dateLabel, style: AppTextStyles.caption),
+                  ),
+                ],
               ),
             ],
           ),

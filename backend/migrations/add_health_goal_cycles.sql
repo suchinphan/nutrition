@@ -9,6 +9,9 @@ CREATE TABLE health_goal_cycles (
   meals_available INT NOT NULL,
   success_ratio FLOAT NOT NULL,
   is_success TINYINT(1) NOT NULL,
+  weight_start FLOAT NULL,
+  weight_end FLOAT NULL,
+  weight_delta FLOAT GENERATED ALWAYS AS (weight_end - weight_start) STORED,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_goal_cycle_user_period (user_id, period_end),
   CONSTRAINT fk_health_goal_cycles_user FOREIGN KEY (user_id)

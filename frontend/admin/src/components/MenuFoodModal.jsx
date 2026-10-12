@@ -28,17 +28,34 @@ const EMPTY_VALUES = {
 
 const TYPE_LABELS = { food: 'อาหาร', drink: 'เครื่องดื่ม', dessert: 'ของหวาน' };
 
-function ServingSizeManager({ itemId, sizes, onChanged }) {
+function ServingSizeManager({ itemId, sizes, onChanged, baseCalories = 0 }) {
   const [newSize, setNewSize] = useState({ unit_name: '', unit_name_th: '', calories_multiplier: 1, grams_approx: '' });
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingValues, setEditingValues] = useState({});
 
+  const toMultiplier = (value) => {
+    const numericValue = Number(value);
+    const base = Number(baseCalories || 0);
+    if (!Number.isFinite(numericValue) || numericValue <= 0 || !base) return 1;
+    return numericValue / base;
+  };
+
+  const fromMultiplier = (multiplier) => {
+    const numericValue = Number(multiplier);
+    const base = Number(baseCalories || 0);
+    if (!Number.isFinite(numericValue) || numericValue <= 0 || !base) return 0;
+    return Math.round(numericValue * base);
+  };
+
   const handleAdd = async () => {
     if (!newSize.unit_name.trim()) return;
     setAdding(true);
     try {
-      await addServingSize(itemId, newSize);
+      await addServingSize(itemId, {
+        ...newSize,
+        calories_multiplier: toMultiplier(newSize.calories_multiplier),
+      });
       setNewSize({ unit_name: '', unit_name_th: '', calories_multiplier: 1, grams_approx: '' });
       onChanged();
     } catch (err) {
@@ -50,12 +67,19 @@ function ServingSizeManager({ itemId, sizes, onChanged }) {
 
   const startEdit = (s) => {
     setEditingId(s.id);
-    setEditingValues({ unit_name_th: s.unit_name_th || '', calories_multiplier: s.calories_multiplier, grams_approx: s.grams_approx ?? '' });
+    setEditingValues({
+      unit_name_th: s.unit_name_th || '',
+      calories_multiplier: fromMultiplier(s.calories_multiplier),
+      grams_approx: s.grams_approx ?? '',
+    });
   };
 
   const saveEdit = async (s) => {
     try {
-      await updateServingSize(itemId, s.id, editingValues);
+      await updateServingSize(itemId, s.id, {
+        ...editingValues,
+        calories_multiplier: toMultiplier(editingValues.calories_multiplier),
+      });
       setEditingId(null);
       onChanged();
     } catch (err) {
@@ -80,7 +104,7 @@ function ServingSizeManager({ itemId, sizes, onChanged }) {
           <Table.Tr>
             <Table.Th>หน่วย (EN)</Table.Th>
             <Table.Th>หน่วย (TH)</Table.Th>
-            <Table.Th>ตัวคูณแคลอรี</Table.Th>
+            <Table.Th>แคลอรีต่อขนาด</Table.Th>
             <Table.Th>กรัมโดยประมาณ</Table.Th>
             <Table.Th w={80}></Table.Th>
           </Table.Tr>
@@ -96,7 +120,7 @@ function ServingSizeManager({ itemId, sizes, onChanged }) {
                       onChange={(e) => { const val = e.currentTarget.value; setEditingValues((v) => ({ ...v, unit_name_th: val })); }} />
                   </Table.Td>
                   <Table.Td>
-                    <NumberInput size="xs" min={0} step={0.1} value={editingValues.calories_multiplier}
+                    <NumberInput size="xs" min={0} step={10} value={editingValues.calories_multiplier}
                       onChange={(v) => setEditingValues((s) => ({ ...s, calories_multiplier: v }))} />
                   </Table.Td>
                   <Table.Td>
@@ -113,12 +137,9 @@ function ServingSizeManager({ itemId, sizes, onChanged }) {
               ) : (
                 <>
                   <Table.Td>{s.unit_name_th || '-'}</Table.Td>
-                  <Table.Td>{s.calories_multiplier}</Table.Td>
+                  <Table.Td>{fromMultiplier(s.calories_multiplier)}</Table.Td>
                   <Table.Td>{s.grams_approx ?? '-'}</Table.Td>
                   <Table.Td>
-                    {/* เดิม Group ไม่ได้กัน wrap ไว้ — คอลัมน์นี้แคบ (w={80})
-                    พอไอคอนสองอันรวมกว้างเกิน Mantine Group (wrap="wrap" เป็น
-                    ค่า default) เลยตกไปอยู่คนละบรรทัดกัน (ผู้ใช้รายงานจริง) */}
                     <Group gap={4} wrap="nowrap">
                       <ActionIcon variant="subtle" color="brandGreen" onClick={() => startEdit(s)}>✎</ActionIcon>
                       <ActionIcon variant="subtle" color="red" onClick={() => handleDelete(s)}><IconTrash size={14} /></ActionIcon>
@@ -138,7 +159,7 @@ function ServingSizeManager({ itemId, sizes, onChanged }) {
           value={newSize.unit_name} onChange={(e) => { const val = e.currentTarget.value; setNewSize((s) => ({ ...s, unit_name: val })); }} />
         <TextInput size="xs" label="หน่วย (TH)" placeholder="เล็ก/กลาง/ใหญ่" flex={1}
           value={newSize.unit_name_th} onChange={(e) => { const val = e.currentTarget.value; setNewSize((s) => ({ ...s, unit_name_th: val })); }} />
-        <NumberInput size="xs" label="ตัวคูณ" min={0} step={0.1} w={90}
+        <NumberInput size="xs" label="แคลอรี/ขนาด" min={0} step={10} w={120}
           value={newSize.calories_multiplier} onChange={(v) => setNewSize((s) => ({ ...s, calories_multiplier: v }))} />
         <NumberInput size="xs" label="กรัม" min={0} w={90}
           value={newSize.grams_approx} onChange={(v) => setNewSize((s) => ({ ...s, grams_approx: v }))} />
@@ -223,28 +244,48 @@ export function MenuFoodModal({ opened, onClose, typeFilter, initialValues, onSa
     }
   };
 
+  const hasValue = (value) => value !== null && value !== undefined && value !== '';
+
   const computedKcal = Math.round(
     (form.values.carbs_g || 0) * 4 + (form.values.protein_g || 0) * 4 + (form.values.fat_g || 0) * 9,
   );
 
-  // เดิมแยกเป็น 2 ปุ่มคนละทิศ (macros->kcal / kcal->macros) ผู้ใช้ขอให้รวม
-  // เป็นปุ่มเดียว — ปุ่มนี้ฉลาดพอจะเลือกทิศให้เองจากข้อมูลที่กรอกไว้แล้ว:
-  // มีแคลอรีแต่ยังไม่มีสารอาหารเลย -> คำนวณสารอาหารจากแคลอรี (50/20/30 + 4/4/9)
+  // มีแคลอรีแต่ยังไม่มีสารอาหารเลย -> คำนวณสารอาหารจากแคลอรี (50/20/30)
   // มีสารอาหารแต่ยังไม่มีแคลอรี -> คำนวณแคลอรีจากสารอาหาร (4/4/9)
-  // ไม่มีข้อมูลอะไรเลยสักฝั่ง -> แจ้งให้กรอกอย่างใดอย่างหนึ่งก่อน
-  const hasMacros = (form.values.protein_g || 0) > 0 || (form.values.carbs_g || 0) > 0 || (form.values.fat_g || 0) > 0;
-  const hasCalories = (form.values.calories || 0) > 0;
+  // โดยมีการคำนวณอัตโนมัติทันทีเมื่อค่าฟิลด์เปลี่ยน เพื่อให้ไม่ต้องกดปุ่ม
+  const hasMacros = hasValue(form.values.protein_g) || hasValue(form.values.carbs_g) || hasValue(form.values.fat_g);
+  const hasCalories = hasValue(form.values.calories);
 
   const calculateMissing = () => {
-    if (hasCalories && !hasMacros) {
-      const kcal = form.values.calories;
-      form.setFieldValue('carbs_g', Math.round((kcal * 0.5) / 4));
-      form.setFieldValue('protein_g', Math.round((kcal * 0.2) / 4));
-      form.setFieldValue('fat_g', Math.round((kcal * 0.3) / 9));
-    } else if (hasMacros) {
+    const missingFields = [];
+
+    if (!form.values.name?.trim()) missingFields.push('ชื่อเมนู (EN)');
+    if (!form.values.name_th?.trim()) missingFields.push('ชื่อเมนู (TH)');
+    if (!form.values.category_id) missingFields.push('หมวดหมู่');
+    if (!hasCalories) missingFields.push('แคลอรี');
+    if (!hasValue(form.values.protein_g)) missingFields.push('โปรตีน');
+    if (!hasValue(form.values.carbs_g)) missingFields.push('คาร์บ');
+    if (!hasValue(form.values.fat_g)) missingFields.push('ไขมัน');
+
+    if (missingFields.length > 0) {
+      notifications.show({
+        color: 'yellow',
+        title: 'กรอกข้อมูลให้ครบถ้วนก่อน',
+        message: `คุณยังขาดข้อมูลต่อไปนี้ก่อนคำนวณสารอาหาร: ${missingFields.join(', ')}`,
+        autoClose: 10000,
+      });
+      return;
+    }
+
+    notifications.show({
+      color: 'green',
+      title: 'กรอกข้อมูลครบถ้วนเรียบร้อยแล้ว',
+      message: 'กรอกข้อมูลครบถ้วนเรียบร้อยแล้ว',
+      autoClose: 10000,
+    });
+
+    if (hasMacros && !hasCalories) {
       form.setFieldValue('calories', computedKcal);
-    } else {
-      notifications.show({ color: 'yellow', message: 'กรอกแคลอรี หรือ โปรตีน/คาร์บ/ไขมัน อย่างน้อย 1 อย่างก่อน' });
     }
   };
 
@@ -342,8 +383,14 @@ export function MenuFoodModal({ opened, onClose, typeFilter, initialValues, onSa
               <NumberInput label="ไขมัน (g)" min={0} {...form.getInputProps('fat_g')} />
             </SimpleGrid>
             <Group justify="flex-end" mt={-8}>
-              <Button size="xs" variant="light" color="brandGreen" onClick={calculateMissing}>
-                คำนวณให้อัตโนมัติ (แคลอรี ↔ สารอาหาร)
+              <Button
+                type="button"
+                size="xs"
+                variant="light"
+                color="brandGreen"
+                onClick={calculateMissing}
+              >
+                คำนวณสารอาหาร
               </Button>
             </Group>
             <Stack gap="xs">
@@ -414,7 +461,7 @@ export function MenuFoodModal({ opened, onClose, typeFilter, initialValues, onSa
         {currentItem && !loadingRefs && (
           <>
             <Divider label="ขนาดเสิร์ฟ (ไม่บังคับ)" labelPosition="center" />
-            <ServingSizeManager itemId={currentItem.id} sizes={currentItem.serving_sizes || []} onChanged={refreshCurrentItem} />
+            <ServingSizeManager itemId={currentItem.id} sizes={currentItem.serving_sizes || []} onChanged={refreshCurrentItem} baseCalories={Number(form.values.calories || 0)} />
           </>
         )}
       </Stack>

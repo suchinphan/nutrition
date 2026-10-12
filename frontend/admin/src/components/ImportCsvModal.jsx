@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import {
-  Modal, Stack, Group, Button, Text, FileInput, Table, Badge, Alert, Divider, Anchor,
+  Modal, Stack, Group, Button, Text, FileInput, Table, Badge, Divider, Anchor,
 } from '@mantine/core';
-import { IconUpload, IconDownload, IconAlertTriangle } from '@tabler/icons-react';
+import { IconUpload, IconDownload } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { importFoodItemsCsv } from '../api/foodMenus';
 
@@ -12,12 +12,14 @@ import { importFoodItemsCsv } from '../api/foodMenus';
 const TEMPLATE_HEADERS = [
   'name', 'name_th', 'category_name', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'sugar_g', 'image_url',
 ];
-const TEMPLATE_SAMPLE_ROW = [
-  'Grilled Chicken Breast', 'อกไก่ย่าง', 'อาหารจานหลัก', '165', '31', '0', '3.6', '0', '0', '',
-];
-
-function downloadCsvTemplate() {
-  const csv = [TEMPLATE_HEADERS.join(','), TEMPLATE_SAMPLE_ROW.join(',')].join('\r\n');
+function downloadCsvTemplate(categoryName) {
+  const rows = [TEMPLATE_HEADERS];
+  if (categoryName) {
+    rows.push([
+      'Grilled Chicken Breast', 'อกไก่ย่าง', categoryName, '165', '31', '0', '3.6', '0', '0', '',
+    ]);
+  }
+  const csv = rows.map((row) => row.join(',')).join('\r\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -71,7 +73,7 @@ function ResultTable({ results }) {
   );
 }
 
-export function ImportCsvModal({ opened, onClose, onImported }) {
+export function ImportCsvModal({ opened, type, categories, onClose, onImported }) {
   const [file, setFile] = useState(null);
   const [previewing, setPreviewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -94,7 +96,7 @@ export function ImportCsvModal({ opened, onClose, onImported }) {
     setPreviewing(true);
     setFinalResult(null);
     try {
-      const result = await importFoodItemsCsv(file, true);
+      const result = await importFoodItemsCsv(file, true, type);
       setPreview(result);
     } catch (err) {
       notifications.show({ color: 'red', title: 'อ่านไฟล์ไม่สำเร็จ', message: err.message });
@@ -107,7 +109,7 @@ export function ImportCsvModal({ opened, onClose, onImported }) {
     if (!file) return;
     setConfirming(true);
     try {
-      const result = await importFoodItemsCsv(file, false);
+      const result = await importFoodItemsCsv(file, false, type);
       setFinalResult(result);
       notifications.show({
         color: result.error_count > 0 ? 'orange' : 'green',
@@ -136,7 +138,11 @@ export function ImportCsvModal({ opened, onClose, onImported }) {
             onChange={(f) => { setFile(f); setPreview(null); setFinalResult(null); }}
             flex={1}
           />
-          <Anchor size="sm" onClick={downloadCsvTemplate} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Anchor
+            size="sm"
+            onClick={() => downloadCsvTemplate(categories[0]?.name)}
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          >
             <IconDownload size={14} /> ดาวน์โหลด CSV ตัวอย่าง
           </Anchor>
         </Group>
@@ -157,11 +163,6 @@ export function ImportCsvModal({ opened, onClose, onImported }) {
               </Text>
               <Text size="sm" c="red">ผิดพลาด <b>{displayed.error_count}</b> แถว</Text>
             </Group>
-            {displayed.new_categories?.length > 0 && (
-              <Alert icon={<IconAlertTriangle size={16} />} color="yellow" variant="light">
-                จะสร้างหมวดหมู่ใหม่อัตโนมัติ: {displayed.new_categories.join(', ')}
-              </Alert>
-            )}
             <ResultTable results={displayed.results} />
           </>
         )}

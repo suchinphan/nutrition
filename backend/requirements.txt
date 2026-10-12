@@ -6,5 +6,6 @@ PyMySQL
 cryptography
 Flask-Limiter
 Pillow
+scikit-learn
 python-dotenv
 fpdf2

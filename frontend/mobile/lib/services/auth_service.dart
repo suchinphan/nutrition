@@ -305,6 +305,9 @@ class AuthService with ChangeNotifier {
       if (value != null) {
         if (value is String && value.trim().isEmpty) return;
         merged[key] = value;
+      } else if (key == 'health_goal_calorie_adjustment') {
+        // A local null explicitly clears a previously cached rate.
+        merged[key] = null;
       }
     });
 

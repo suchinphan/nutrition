@@ -12,7 +12,7 @@ void main() {
     // ProfilePage._dietPlanValidationError) เลยยังผ่านเงื่อนไขนี้ได้อยู่
     // ทั้งที่ไม่ได้กรอกครบจริง (ผู้ใช้รายงานจริง)
     await AuthService().saveUser({
-      'id': '999',
+      'id': 'meal-log-flow-test',
       'gender': 'ชาย',
       'date_of_birth': '2000-01-01',
       'activity_level': 'ไม่ออกกำลังกายหรือออกกำลังกายน้อยมาก',
@@ -29,5 +29,19 @@ void main() {
     }, syncToServer: false);
 
     expect(hasCompleteProfileAndGoal(), isTrue);
+  });
+
+  test('clearing a health-goal calorie adjustment removes the cached rate', () async {
+    final auth = AuthService();
+    await auth.saveUser({
+      'id': 'calorie-adjustment-test',
+      'health_goal_calorie_adjustment': 500,
+    }, syncToServer: false);
+    expect(auth.user?['health_goal_calorie_adjustment'], 500);
+
+    await auth.saveUser({
+      'health_goal_calorie_adjustment': null,
+    }, syncToServer: false);
+    expect(auth.user?['health_goal_calorie_adjustment'], isNull);
   });
 }

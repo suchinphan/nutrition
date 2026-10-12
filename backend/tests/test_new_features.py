@@ -14,16 +14,18 @@ during development.
 import io
 import os
 import sys
+import uuid
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import api as api_module
 from api import app, db, _meal_is_sealed
 from conftest import PASSWORD, freeze_meal_window
 from health_calc import calc_age, calc_calories_goal, calc_calories_goal_custom, calc_tdee
 from models import (
-    Allergen, FoodCategory, FoodItem, HealthGoalCycle, MealLog, MealLogItem,
-    User, UserConsent, get_thailand_time,
+    Allergen, FoodCategory, FoodItem, FoodType, HealthGoalCycle, MealLog,
+    MealLogItem, User, UserConsent, WeightLog, get_thailand_time,
 )
 
 ADMIN_SECRET = os.environ.get('ADMIN_SECRET', '12345678zA*')
@@ -192,6 +194,7 @@ def test_health_goal_locked_until_aligns_to_day7_dinner_close(client, test_user)
     today = get_thailand_time().date()
     resp = client.post('/api/user/health-goal', json={'health_goal': 'ลดน้ำหนัก'}, headers=auth)
     assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()['health_goal_start_weight'] == 65.0
 
     # ตั้งวันนี้เป็น "วันที่ 1" — ต้องปลดล็อกได้ตอน 22:00 ของ "วันที่ 7"
     # (วันนี้ + 6 วัน) ไม่ใช่ now+7*24 ชม.ตรงๆ ที่อาจจบกลางดึก/กลางมื้อ
@@ -260,10 +263,11 @@ def test_calories_goal_custom_plan_refreshes_with_custom_formula_on_weight_chang
 
     resp = client.post(
         '/api/user/health-goal',
-        json={'health_goal': 'ลดน้ำหนัก', 'target_weight': 60, 'days': 30},
+        json={'health_goal': 'ลดน้ำหนัก', 'target_weight': 60, 'days': 197},
         headers=auth,
     )
     assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()['health_goal_start_weight'] == 75.0
 
     # เปลี่ยนกิจกรรม (ไม่แตะ target_weight/days) — TDEE เปลี่ยน แต่แผนเดิมยังอยู่
     resp = client.post(f'/user/{test_user["user_id"]}', json={
@@ -273,11 +277,66 @@ def test_calories_goal_custom_plan_refreshes_with_custom_formula_on_weight_chang
 
     age = calc_age(datetime.fromisoformat(dob).date())
     tdee_after = calc_tdee(75, 170, age, 'ชาย', 'ออกกำลังกายหนักมากเป็นนักกีฬา')
-    expected_after = calc_calories_goal_custom(tdee_after, 75, 60, 30, 'ชาย')
+    expected_after = calc_calories_goal_custom(tdee_after, 75, 60, 197, 'ชาย')
     assert resp.get_json()['calories_goal'] == expected_after
     # เป้าหมายน้ำหนัก/จำนวนวันของแผนเดิมต้องไม่ถูกแตะ
     assert resp.get_json()['health_goal_target_weight'] == 60
-    assert resp.get_json()['health_goal_target_days'] == 30
+    assert resp.get_json()['health_goal_target_days'] == 197
+
+
+def test_health_goal_saves_and_returns_selected_calorie_adjustment(client, test_user):
+    auth = _login(client, test_user)
+    profile = client.post(f'/user/{test_user["user_id"]}', json={
+        'gender': 'ชาย', 'date_of_birth': '1996-01-01',
+        'weight': 65, 'height': 170, 'activity_level': 'ไม่ออกกำลัง',
+    }, headers=auth)
+    assert profile.status_code == 200, profile.get_json()
+
+    for goal, target_weight, adjustment in (
+        ('ลดน้ำหนัก', 60, 500),
+        ('เพิ่มน้ำหนัก', 70, 1000),
+    ):
+        resp = client.post('/api/user/health-goal', json={
+            'health_goal': goal,
+            'target_weight': target_weight,
+            'days': 120,
+            'calorie_adjustment': adjustment,
+        }, headers=auth)
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()['health_goal_calorie_adjustment'] == adjustment
+
+        saved_profile = client.get(f'/user/{test_user["user_id"]}', headers=auth)
+        assert saved_profile.status_code == 200, saved_profile.get_json()
+        assert saved_profile.get_json()['health_goal_calorie_adjustment'] == adjustment
+
+    maintenance = client.post('/api/user/health-goal', json={
+        'health_goal': 'รักษาน้ำหนัก',
+        'target_weight': 65,
+        'days': 30,
+    }, headers=auth)
+    assert maintenance.status_code == 200, maintenance.get_json()
+    assert maintenance.get_json()['health_goal_calorie_adjustment'] is None
+
+
+def test_health_goal_rejects_custom_plan_with_unsafe_calories(client, test_user):
+    auth = _login(client, test_user)
+    resp = client.post(f'/user/{test_user["user_id"]}', json={
+        'gender': 'ชาย', 'date_of_birth': '1996-01-01',
+        'weight': 75, 'height': 170, 'activity_level': 'ไม่ออกกำลัง',
+    }, headers=auth)
+    assert resp.status_code == 200, resp.get_json()
+
+    resp = client.post(
+        '/api/user/health-goal',
+        json={'health_goal': 'ลดน้ำหนัก', 'target_weight': 60, 'days': 30},
+        headers=auth,
+    )
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()['code'] == 'UNSAFE_HEALTH_GOAL'
+
+    profile = client.get(f'/user/{test_user["user_id"]}', headers=auth)
+    assert profile.status_code == 200, profile.get_json()
+    assert profile.get_json()['health_goal'] is None
 
 
 def test_health_goal_cycle_finalizes_once_when_expired(client, test_user):
@@ -426,6 +485,58 @@ def test_dashboard_shows_goal_cycle_result_until_acknowledged(client, test_user)
     assert resp4.get_json()['goal_cycle_result'] is None
 
 
+def test_weight_goal_success_uses_starting_weight_and_target(client, test_user, monkeypatch):
+    auth = _login(client, test_user)
+    monkeypatch.setattr(api_module, 'GOAL_SUCCESS_THRESHOLD', 0.0)
+    resp = client.post(f'/user/{test_user["user_id"]}', json={
+        'gender': 'ชาย', 'date_of_birth': '1996-01-01',
+        'weight': 65.0, 'height': 170, 'activity_level': 'ไม่ออกกำลัง',
+    }, headers=auth)
+    assert resp.status_code == 200, resp.get_json()
+
+    item = _first_food_item(client, auth)
+
+    def assert_case(goal, start_weight, target_weight, end_weight, expected, offset_days):
+        with app.app_context():
+            user = User.query.get(test_user['user_id'])
+            WeightLog.query.filter_by(user_id=user.id).delete()
+            HealthGoalCycle.query.filter_by(user_id=user.id).delete()
+            user.health_goal = goal
+            user.health_goal_start_weight = start_weight
+            user.health_goal_target_weight = target_weight
+            user.health_goal_target_days = 1
+            user.calories_goal = 2000
+            user.health_goal_locked_until = get_thailand_time().replace(tzinfo=None) - timedelta(days=offset_days)
+            user.health_goal_started_at = get_thailand_time().replace(tzinfo=None) - timedelta(days=offset_days + 7)
+            logged_at = get_thailand_time().date() - timedelta(days=offset_days)
+            db.session.add(WeightLog(user_id=user.id, logged_at=logged_at, weight=end_weight))
+            db.session.commit()
+
+        resp = client.get('/api/dashboard', headers=auth)
+        assert resp.status_code == 200, resp.get_json()
+        result = resp.get_json()['goal_cycle_result']
+        assert result is not None
+        assert result['health_goal'] == goal
+        assert result['is_success'] is expected, (
+            f'goal={goal}, start={start_weight}, target={target_weight}, end={end_weight}, '
+            f'expected={expected}, got={result["is_success"]}'
+        )
+        assert result['weight_start'] == start_weight
+        assert result['weight_end'] == end_weight
+
+    # ลดน้ำหนัก: จาก 75 กก. เหลือ 74.9 ยังไม่ถึงเป้าหมาย 70 กก.
+    assert_case('ลดน้ำหนัก', 75.0, 70.0, 74.9, False, 1)
+    # ลดน้ำหนัก: ถึงหรือต่ำกว่าเป้าหมาย 70 กก. จึงสำเร็จ
+    assert_case('ลดน้ำหนัก', 75.0, 70.0, 70.0, True, 2)
+    assert_case('ลดน้ำหนัก', 75.0, 70.0, 69.9, True, 3)
+    # รักษาน้ำหนัก: คลาดจากน้ำหนักเริ่มต้นไม่เกิน 0.1 กก. จึงสำเร็จ
+    assert_case('รักษาน้ำหนัก', 65.0, 65.0, 65.1, True, 4)
+    assert_case('รักษาน้ำหนัก', 65.0, 65.0, 65.2, False, 5)
+    # เพิ่มน้ำหนัก: ต้องถึงหรือมากกว่าเป้าหมาย ไม่ใช่แค่เพิ่มจากจุดเริ่มต้น
+    assert_case('เพิ่มน้ำหนัก', 65.0, 70.0, 69.9, False, 6)
+    assert_case('เพิ่มน้ำหนัก', 65.0, 70.0, 70.0, True, 7)
+
+
 # =========================
 # MULTI-ITEM MEAL LOGS (FoodBrowserPage เลือกหลายเมนูแล้วยืนยันรวดเดียว)
 # =========================
@@ -487,10 +598,10 @@ def test_unread_count_increases_after_admin_reply_and_decreases_after_mark_read(
 # CSV IMPORT (admin)
 # =========================
 
-def _csv_upload(client, content, dry_run):
+def _csv_upload(client, content, dry_run, category_type='food'):
     data = {'file': (io.BytesIO(content.encode('utf-8')), 'import.csv')}
     return client.post(
-        f'/admin/food-items/import?dry_run={"true" if dry_run else "false"}',
+        f'/admin/food-items/import?type={category_type}&dry_run={"true" if dry_run else "false"}',
         data=data,
         headers=ADMIN_HEADERS,
         content_type='multipart/form-data',
@@ -498,37 +609,55 @@ def _csv_upload(client, content, dry_run):
 
 
 def test_csv_import_dry_run_does_not_write_to_db(client):
+    category_name = f'pytest_dry_run_{uuid.uuid4().hex[:8]}'
+    with app.app_context():
+        category = FoodCategory(name=category_name, type='food')
+        db.session.add(category)
+        db.session.commit()
+        category_id = category.id
+
     csv_content = (
         'name,name_th,category_name,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,image_url\r\n'
-        'Pytest Dry Run Item,ทดสอบ dry run,pytest_dry_run_category,100,5,10,2,,,\r\n'
+        f'Pytest Dry Run Item,ทดสอบ dry run,{category_name},100,5,10,2,,,\r\n'
     )
-    with app.app_context():
-        before_items = FoodItem.query.count()
-        before_cats = FoodCategory.query.count()
+    try:
+        with app.app_context():
+            before_items = FoodItem.query.count()
+            before_cats = FoodCategory.query.count()
 
-    resp = _csv_upload(client, csv_content, dry_run=True)
-    assert resp.status_code == 200, resp.get_json()
-    body = resp.get_json()
-    assert body['dry_run'] is True
-    assert body['would_create_count'] == 1
-    assert body['error_count'] == 0
-    assert body['results'][0]['status'] == 'would_create'
-    assert 'pytest_dry_run_category' in body['new_categories']
+        resp = _csv_upload(client, csv_content, dry_run=True)
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body['dry_run'] is True
+        assert body['would_create_count'] == 1
+        assert body['error_count'] == 0
+        assert body['results'][0]['status'] == 'would_create'
+        assert body['new_categories'] == []
 
-    with app.app_context():
-        assert FoodItem.query.count() == before_items, 'dry_run ต้องไม่เขียน FoodItem ลง DB จริง'
-        assert FoodCategory.query.count() == before_cats, 'dry_run ต้องไม่สร้างหมวดหมู่ใหม่จริง'
+        with app.app_context():
+            assert FoodItem.query.count() == before_items, 'dry_run ต้องไม่เขียน FoodItem ลง DB จริง'
+            assert FoodCategory.query.count() == before_cats, 'dry_run ต้องไม่สร้าง FoodCategory เพิ่ม'
+    finally:
+        with app.app_context():
+            FoodCategory.query.filter_by(id=category_id).delete()
+            db.session.commit()
 
 
 def test_csv_import_commit_separates_success_and_error_rows_correctly(client):
+    category_name = f'pytest_commit_{uuid.uuid4().hex[:8]}'
+    with app.app_context():
+        category = FoodCategory(name=category_name, type='food')
+        db.session.add(category)
+        db.session.commit()
+        category_id = category.id
+
     csv_content = (
         'name,name_th,category_name,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,image_url\r\n'
-        'Pytest Commit Valid Item,ทดสอบสำเร็จ,pytest_commit_category,150,8,15,3,,,\r\n'
-        ',ทดสอบไม่มีชื่อ,pytest_commit_category,120,4,10,2,,,\r\n'
-        'Pytest Commit Bad Calories,ทดสอบตัวเลขผิด,pytest_commit_category,not_a_number,4,10,2,,,\r\n'
+        f'Pytest Commit Valid Item,ทดสอบสำเร็จ,{category_name},150,8,15,3,,,\r\n'
+        f',ทดสอบไม่มีชื่อ,{category_name},120,4,10,2,,,\r\n'
+        f'Pytest Commit Bad Calories,ทดสอบตัวเลขผิด,{category_name},not_a_number,4,10,2,,,\r\n'
     )
     created_item_id = None
-    created_category_id = None
     try:
         resp = _csv_upload(client, csv_content, dry_run=False)
         assert resp.status_code == 200, resp.get_json()
@@ -546,16 +675,77 @@ def test_csv_import_commit_separates_success_and_error_rows_correctly(client):
         assert 'calories' in results_by_row[4]['error']
 
         with app.app_context():
-            item = FoodItem.query.get(created_item_id)
+            item = db.session.get(FoodItem, created_item_id)
             assert item is not None
             assert item.name == 'Pytest Commit Valid Item'
-            created_category_id = item.category_id
+            assert item.category_id == category_id
     finally:
         with app.app_context():
             if created_item_id is not None:
                 FoodItem.query.filter_by(id=created_item_id).delete()
-            if created_category_id is not None:
-                FoodCategory.query.filter_by(id=created_category_id).delete()
+            FoodCategory.query.filter_by(id=category_id).delete()
+            db.session.commit()
+
+
+def test_csv_import_requires_category_in_selected_type(client):
+    suffix = uuid.uuid4().hex[:8]
+    category_type = f'pytest_fruit_{suffix}'
+    category_name = f'pytest_shared_{suffix}'
+    food_only_category = f'pytest_food_only_{suffix}'
+    with app.app_context():
+        db.session.add(FoodType(name=category_type, sort_order=100))
+        fruit_category = FoodCategory(name=category_name, type=category_type)
+        food_category = FoodCategory(name=category_name, type='food')
+        food_only = FoodCategory(name=food_only_category, type='food')
+        db.session.add_all([fruit_category, food_category, food_only])
+        db.session.commit()
+        fruit_category_id = fruit_category.id
+        food_category_id = food_category.id
+        food_only_id = food_only.id
+        before_category_count = FoodCategory.query.count()
+
+    csv_content = (
+        'name,name_th,category_name,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,image_url\r\n'
+        f'Pytest Fruit Item,ทดสอบผลไม้,{category_name},100,5,10,2,,,\r\n'
+        f'Pytest Wrong Type Item,ทดสอบผิดประเภท,{food_only_category},100,5,10,2,,,\r\n'
+        f'Pytest Missing Category Item,ทดสอบไม่มีหมวด,pytest_missing_{suffix},100,5,10,2,,,\r\n'
+    )
+    created_item_id = None
+    try:
+        preview = _csv_upload(client, csv_content, dry_run=True, category_type=category_type)
+        assert preview.status_code == 200, preview.get_json()
+        preview_body = preview.get_json()
+        assert preview_body['would_create_count'] == 1
+        assert preview_body['error_count'] == 2
+        assert preview_body['results'][0]['status'] == 'would_create'
+        assert preview_body['results'][1]['status'] == 'error'
+        assert category_type in preview_body['results'][1]['error']
+        assert preview_body['results'][2]['status'] == 'error'
+
+        imported = _csv_upload(client, csv_content, dry_run=False, category_type=category_type)
+        assert imported.status_code == 200, imported.get_json()
+        imported_body = imported.get_json()
+        assert imported_body['created_count'] == 1
+        assert imported_body['error_count'] == 2
+        results_by_row = {result['row']: result for result in imported_body['results']}
+        assert results_by_row[2]['status'] == 'created'
+        assert results_by_row[3]['status'] == 'error'
+        assert results_by_row[4]['status'] == 'error'
+
+        with app.app_context():
+            created_item_id = results_by_row[2]['id']
+            imported_item = db.session.get(FoodItem, created_item_id)
+            assert imported_item is not None
+            assert imported_item.category_id == fruit_category_id
+            assert FoodCategory.query.count() == before_category_count
+    finally:
+        with app.app_context():
+            if created_item_id is not None:
+                FoodItem.query.filter_by(id=created_item_id).delete()
+            FoodCategory.query.filter(
+                FoodCategory.id.in_([fruit_category_id, food_category_id, food_only_id])
+            ).delete(synchronize_session=False)
+            FoodType.query.filter_by(name=category_type).delete()
             db.session.commit()
 
 

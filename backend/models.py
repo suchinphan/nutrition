@@ -1,6 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Computed, UniqueConstraint
 
 db = SQLAlchemy()
 
@@ -47,13 +47,15 @@ class User(db.Model):
     # ตรงๆ อีกต่อไป (ปัดไปที่ 22:00 ของวันที่ 7) คำนวณย้อนกลับจาก locked_until
     # เพียงอย่างเดียวไม่ได้แม่นยำแล้ว
     health_goal_started_at = db.Column(db.DateTime, nullable=True)
-    # น้ำหนักเป้าหมาย/จำนวนวันที่กรอกในกล่อง "วางแผนพลังงาน" ตอนบันทึก
-    # health_goal ล่าสุด — เดิมไม่เก็บเลย มีแต่ผลลัพธ์ (calories_goal) พอ
-    # รีเฟรช/เปิดแอปใหม่ ช่องกรอกในกล่องวางแผนพลังงานเลยว่างเปล่า ทั้งที่
-    # เพิ่งกรอก+คำนวณ+บันทึกไปแล้ว (ผู้ใช้รายงานจริง) เก็บไว้ให้ฝั่ง Flutter
-    # โหลดกลับมาเติมในช่องเดิมได้
+    # Snapshot น้ำหนักตอนเริ่มรอบ แยกจากน้ำหนักเป้าหมายและน้ำหนักย้อนหลัง
+    # เพื่อใช้ประเมินผลรอบโดยไม่เปลี่ยนตามการชั่งระหว่างรอบ
+    health_goal_start_weight = db.Column(db.Float, nullable=True)
+    # น้ำหนักเป้าหมาย/จำนวนวันที่กรอกในกล่องวางแผนพลังงานตอนบันทึก
+    # health_goal ล่าสุด — เก็บไว้ให้ฝั่ง Flutter โหลดกลับมาเติมช่องเดิมได้
     health_goal_target_weight = db.Column(db.Float, nullable=True)
     health_goal_target_days = db.Column(db.Integer, nullable=True)
+    # BMR/TDEE calorie rate selected for a weight-loss or weight-gain plan
+    health_goal_calorie_adjustment = db.Column(db.Integer, nullable=True)
 
     # JSON array, เช่น ["ความดันโลหิตสูง"] / ["กุ้ง"]
     chronic_diseases = db.Column(db.JSON, nullable=True)
@@ -261,6 +263,13 @@ class HealthGoalCycle(db.Model):
     meals_over_quota = db.Column(db.Integer, nullable=False, default=0)
     success_ratio = db.Column(db.Float, nullable=False)
     is_success = db.Column(db.Boolean, nullable=False)
+    weight_start = db.Column(db.Float, nullable=True)
+    weight_end = db.Column(db.Float, nullable=True)
+    weight_delta = db.Column(
+        db.Float,
+        Computed('weight_end - weight_start', persisted=True),
+        nullable=True,
+    )
     created_at = db.Column(db.DateTime, default=get_thailand_time)
     # ผู้ใช้เห็น dialog สรุปผลนี้แล้วหรือยัง (ดู api.get_dashboard_summary) —
     # null = ยังไม่เคยเห็น, dashboard จะโชว์ dialog ครั้งเดียวแล้วเซ็ตค่านี้

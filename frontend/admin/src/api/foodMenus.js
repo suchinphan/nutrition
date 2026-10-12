@@ -31,10 +31,13 @@ export const deleteFoodItem = (id) => apiDelete(`/admin/food-items/${id}`);
 
 // dry_run=true (ค่า default ฝั่ง backend) แค่ preview ไม่แตะ DB — ต้องส่ง
 // dry_run=false ชัดเจนถึงจะเขียนจริง (ดู admin_import_food_items)
-export const importFoodItemsCsv = (file, dryRun) => {
+export const importFoodItemsCsv = (file, dryRun, type) => {
   const formData = new FormData();
   formData.append('file', file);
-  return apiPost(`/admin/food-items/import?dry_run=${dryRun ? 'true' : 'false'}`, formData);
+  return apiPost(
+    `/admin/food-items/import?type=${encodeURIComponent(type)}&dry_run=${dryRun ? 'true' : 'false'}`,
+    formData
+  );
 };
 
 export const addServingSize = (itemId, payload) =>

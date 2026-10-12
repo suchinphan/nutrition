@@ -78,23 +78,26 @@ void main() {
       expect(find.text('วางแผนพลังงาน'), findsOneWidget);
 
       await tester.enterText(find.widgetWithText(TextField, 'เป้าหมายน้ำหนักที่ต้องการ'), '60');
-      await tester.enterText(find.widgetWithText(TextField, 'จำนวนวัน'), '30');
+      final recommendedLossDays = tester.widget<TextField>(
+        find.widgetWithText(TextField, 'จำนวนวัน'),
+      ).controller!.text;
+      expect(recommendedLossDays, '124');
       await tester.tap(find.text('คำนวณ'));
       await tester.pumpAndSettle();
 
-      // (60-68)*7700/30 = -2053.33 -> ต้องลด 2053, แนะนำ 2046-2053=-7 -> โดน floor เป็น 1500
+      // 8 kg ใช้ 124 วันตาม TDEE - 500 kcal/วัน; ผลต่างพลังงานเฉลี่ย 497 kcal/วัน.
       // ตอนนี้ยังไม่ได้กดบันทึก การ์ด "ลดน้ำหนัก" เองต้องยังไม่โชว์ตัวเลข ->
-      // "1500 kcal" ต้องเจอแค่จุดเดียว (ในกล่องวางแผนพลังงาน)
+      // "1549 kcal" ต้องเจอแค่จุดเดียว (ในกล่องวางแผนพลังงาน)
       expect(find.text('พลังงานที่ต้องลดต่อวัน (kcal)'), findsOneWidget);
-      expect(find.text('2053 kcal'), findsOneWidget);
+      expect(find.text('497 kcal'), findsOneWidget);
       expect(find.text('พลังงานที่แนะนำต่อวัน (kcal)'), findsOneWidget);
-      expect(find.text('1500 kcal'), findsOneWidget);
+      expect(find.text('1549 kcal'), findsOneWidget);
 
       // 2b) กด "บันทึกเป้าหมาย" -> หลังบันทึกสำเร็จ การ์ด "ลดน้ำหนัก" ต้องโชว์
-      //     kcal เดียวกับกล่องวางแผนพลังงาน (1500 kcal) เป็นจุดที่ 2 แล้ว
+      //     kcal เดียวกับกล่องวางแผนพลังงาน (1549 kcal) เป็นจุดที่ 2 แล้ว
       await tester.tap(find.text('บันทึกเป้าหมาย'));
       await tester.pumpAndSettle(const Duration(seconds: 3));
-      expect(find.text('1500 kcal'), findsNWidgets(2));
+      expect(find.text('1549 kcal'), findsNWidgets(2));
 
       // 3) สลับไป "เพิ่มน้ำหนัก" -> ต้องเป็นกล่องใหม่ ไม่ใช่ค่าที่กรอกไว้ใน "ลดน้ำหนัก"
       await tester.tap(find.text('เพิ่มน้ำหนัก'));
@@ -103,21 +106,39 @@ void main() {
       expect(targetField.controller!.text, isEmpty);
 
       await tester.enterText(find.widgetWithText(TextField, 'เป้าหมายน้ำหนักที่ต้องการ'), '75');
-      await tester.enterText(find.widgetWithText(TextField, 'จำนวนวัน'), '30');
+      final recommendedGainDays = tester.widget<TextField>(
+        find.widgetWithText(TextField, 'จำนวนวัน'),
+      ).controller!.text;
+      expect(recommendedGainDays, '108');
       await tester.tap(find.text('คำนวณ'));
       await tester.pumpAndSettle();
 
-      // (75-68)*7700/30 = 1796.67 -> ต้องเพิ่ม 1797, แนะนำ 2046+1797=3843
+      // 7 kg ใช้ 108 วันตาม TDEE + 500 kcal/วัน; ผลต่างพลังงานเฉลี่ย 499 kcal/วัน.
       expect(find.text('พลังงานที่ต้องเพิ่มต่อวัน (kcal)'), findsOneWidget);
-      expect(find.text('1797 kcal'), findsOneWidget);
-      expect(find.text('3843 kcal'), findsOneWidget);
+      expect(find.text('499 kcal'), findsOneWidget);
+      expect(find.text('2545 kcal'), findsOneWidget);
 
-      // 4) กลับไป "ลดน้ำหนัก" -> ตัวเลขเดิม (60/30) ต้องยังอยู่ครบ ไม่ถูกล้าง
-      //    "1500 kcal" เจอ 2 จุด: กล่องวางแผนพลังงาน + การ์ดเอง (บันทึกไปแล้วในขั้นตอน 2b)
+      // 4) รักษาน้ำหนักเติมน้ำหนักปัจจุบันและแนะนำรอบติดตาม 30 วัน
+      await tester.tap(find.text('รักษาน้ำหนัก'));
+      await tester.pumpAndSettle();
+      final maintenanceTarget = tester.widget<TextField>(
+        find.widgetWithText(TextField, 'เป้าหมายน้ำหนักที่ต้องการ'),
+      ).controller!.text;
+      final maintenanceDays = tester.widget<TextField>(
+        find.widgetWithText(TextField, 'จำนวนวัน'),
+      ).controller!.text;
+      expect(maintenanceTarget, '68.0');
+      expect(maintenanceDays, '30');
+      await tester.tap(find.text('คำนวณ'));
+      await tester.pumpAndSettle();
+      expect(find.text('ไม่ต้องปรับพลังงาน (kcal)'), findsOneWidget);
+
+      // 5) กลับไป "ลดน้ำหนัก" -> ตัวเลขเดิมต้องยังอยู่ครบ ไม่ถูกล้าง
+      //    "1549 kcal" เจอ 2 จุด: กล่องวางแผนพลังงาน + การ์ดเอง
       await tester.tap(find.text('ลดน้ำหนัก'));
       await tester.pumpAndSettle();
-      expect(find.text('2053 kcal'), findsOneWidget);
-      expect(find.text('1500 kcal'), findsNWidgets(2));
+      expect(find.text('497 kcal'), findsOneWidget);
+      expect(find.text('1549 kcal'), findsNWidgets(2));
     } finally {
       await storage.deleteAll();
       for (final entry in snapshot.entries) {
